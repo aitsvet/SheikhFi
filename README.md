@@ -1,3 +1,9 @@
+Презентация: [SheikhFiDApp.pdf](./SheikhFiDApp.pdf)
+
+Видео: [20250720 Алексей Цветков Шейх-fi Singularity x БАШНЯ](https://vkvideo.ru/video-231417225_456239019)
+
+Демо: [Шейх-Fi DApp в сети Polygon Amoy](https://aitsvet.github.io/SheikhFi)
+
 # SheikhFi - Исламская DeFi платформа
 
 SheikhFi реализует принципы исламского финансирования (Islamic Finance) в децентрализованной среде. Основные принципы исламского финансирования воплощены в следующих механизмах:
