@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { ethers } from 'ethers';
 import deployment from './abi/deployment.json';
 
@@ -27,25 +27,6 @@ const buttonStyle = {
   boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
 };
 
-const buttonHoverStyle = {
-  ...buttonStyle,
-  transform: 'translateY(-1px)',
-  boxShadow: '0 4px 8px rgba(0,0,0,0.2)',
-};
-
-// Common select style with diagonal gradient
-const selectStyle = {
-  color: 'white',
-  border: 'none',
-  borderRadius: '6px',
-  padding: '8px 12px',
-  fontSize: '1em',
-  cursor: 'pointer',
-  fontWeight: 'bold',
-  transition: 'all 0.2s ease',
-  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-};
-
 function App() {
   const [address, setAddress] = useState('');
   const [contract, setContract] = useState();
@@ -64,7 +45,9 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [investorDetails, setInvestorDetails] = useState([]);
   const [managerDetails, setManagerDetails] = useState([]);
-  const [votedProposals, setVotedProposals] = useState({});
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const refresh = () => setRefreshKey(k => k + 1);
 
   // Logout handler
   const logout = () => {
@@ -156,47 +139,32 @@ function App() {
         totalFunds = await contract.totalFunds();
         freeFunds = await contract.freeFunds();
         approveShareThreshold = await contract.approveShareThreshold();
-        // Get investor addresses
-        let invCount = 0;
-        try { while (true) { await contract.investorAddresses(invCount); invCount++; } } catch {}
-        investorAddresses = [];
-        for (let i = 0; i < invCount; i++) {
-          investorAddresses.push(await contract.investorAddresses(i));
-        }
-        // Get manager addresses
-        let mgrCount = 0;
-        try { while (true) { await contract.managerAddresses(mgrCount); mgrCount++; } } catch {}
-        managerAddresses = [];
-        for (let i = 0; i < mgrCount; i++) {
-          managerAddresses.push(await contract.managerAddresses(i));
-        }
-        // Get proposals and their approvers
-        let propCount = 0;
-        try { while (true) { await contract.proposals(propCount); propCount++; } } catch {}
-        proposals = [];
-        for (let i = 0; i < propCount; i++) {
-          const proposalRaw = await contract.proposals(i);
+        // Use count getters instead of probe loops
+        const invCount = Number(await contract.getInvestorCount());
+        investorAddresses = await Promise.all(Array.from({ length: invCount }, (_, i) => contract.investorAddresses(i)));
+        const mgrCount = Number(await contract.getManagerCount());
+        managerAddresses = await Promise.all(Array.from({ length: mgrCount }, (_, i) => contract.managerAddresses(i)));
+        const propCount = Number(await contract.getProposalCount());
+        proposals = await Promise.all(Array.from({ length: propCount }, async (_, i) => {
+          const p = await contract.proposals(i);
           let approvers = [];
-          try {
-            approvers = await contract.getApprovers(i);
-          } catch {}
-          const proposal = {
-            manager: proposalRaw[0],
-            description: proposalRaw[1],
-            requiredFunds: proposalRaw[2],
-            secured: proposalRaw[3],
-            revenueReceived: proposalRaw[4],
-            revenuePayed: proposalRaw[5],
-            approvers
+          try { approvers = await contract.getApprovers(i); } catch {}
+          return {
+            manager: p[0],
+            description: p[1],
+            requiredFunds: p[2],
+            secured: p[3],
+            revenueReceived: p[4],
+            revenuePaid: p[5],
+            approvers,
           };
-          proposals.push(proposal);
-        }
+        }));
         proposalCount = propCount;
       } catch {}
       setStatus({ totalFunds, freeFunds, proposalCount, investorAddresses, managerAddresses, proposals, approveShareThreshold });
       setLoading(false);
     })();
-  }, [contract]);
+  }, [contract, refreshKey]);
 
   // Fetch all investor details
   useEffect(() => {
@@ -206,12 +174,12 @@ function App() {
         const details = await Promise.all(
           status.investorAddresses.map(async (addr) => {
             let investor = await contract.investors(addr);
-            return { 
-              addr, 
-              nickname: investor.nickname, 
-              fundsInvested: investor.fundsInvested, 
-              profit: investor.profit, 
-              profitRate: investor.profitRate 
+            return {
+              addr,
+              nickname: investor.nickname,
+              fundsInvested: investor.fundsInvested,
+              profit: investor.profit,
+              profitRate: investor.profitRate
             };
           })
         );
@@ -230,12 +198,12 @@ function App() {
         const details = await Promise.all(
           status.managerAddresses.map(async (addr) => {
             let manager = await contract.managers(addr);
-            return { 
-              addr, 
-              nickname: manager.nickname, 
-              fundsSecured: manager.fundsSecured, 
-              profit: manager.profit, 
-              profitRate: manager.profitRate 
+            return {
+              addr,
+              nickname: manager.nickname,
+              fundsSecured: manager.fundsSecured,
+              profit: manager.profit,
+              profitRate: manager.profitRate
             };
           })
         );
@@ -246,20 +214,15 @@ function App() {
     })();
   }, [contract, status.managerAddresses]);
 
-  // Check which proposals user has voted on
-  useEffect(() => {
-    if (!contract || !address || role !== ROLES.INVESTOR && role !== ROLES.OWNER) return;
-    (async () => {
-      const voted = {};
-      for (let i = 0; i < status.proposals.length; i++) {
-        try {
-          const approvers = await contract.getApprovers(i);
-          voted[i] = approvers.some(addr => addr.toLowerCase() === address.toLowerCase());
-        } catch {}
-      }
-      setVotedProposals(voted);
-    })();
-  }, [contract, address, role, status.proposals]);
+  // Derive voted proposals from already-fetched approvers list
+  const votedProposals = useMemo(() => {
+    if (!address) return {};
+    const voted = {};
+    status.proposals.forEach((p, i) => {
+      voted[i] = (p.approvers || []).some(addr => addr.toLowerCase() === address.toLowerCase());
+    });
+    return voted;
+  }, [status.proposals, address]);
 
   // Voting function
   const vote = async (proposalId) => {
@@ -268,7 +231,7 @@ function App() {
       const tx = await contract.approveProposal(Number(proposalId));
       await tx.wait();
       setLoading(false);
-      window.location.reload();
+      refresh();
     } catch (e) {
       setLoading(false);
       alert('Vote failed: ' + e.message);
@@ -290,7 +253,7 @@ function App() {
     return addr.slice(0, 6) + '...' + addr.slice(-4);
   }
 
-  // Set body background image and gradient
+  // Set body background image
   useEffect(() => {
     const prevBg = document.body.style.background;
     const prevBgRepeat = document.body.style.backgroundRepeat;
@@ -331,12 +294,12 @@ function App() {
       }}>
         <h1 style={{ textAlign: 'center', fontWeight: 700, marginBottom: 24, fontSize: '2.2em' }}>شيخ فاي<br/><br/>Шейх-Fi DApp</h1>
         <div style={{ textAlign: 'center', marginBottom: 16 }}>
-          <a 
+          <a
             href="https://github.com/aitsvet/sheikhfi"
-            target="_blank" 
+            target="_blank"
             rel="noopener noreferrer"
-            style={{ 
-              color: '#0066cc', 
+            style={{
+              color: '#0066cc',
               textDecoration: 'none',
               fontSize: '0.9em',
               marginRight: '16px'
@@ -345,13 +308,13 @@ function App() {
             github.com/aitsvet/sheikhfi
           </a>
           <br></br>
-          <a 
+          <a
             href={`https://amoy.polygonscan.com/address/${CONTRACT_ADDRESS}`}
-            target="_blank" 
+            target="_blank"
             rel="noopener noreferrer"
-            style={{ 
-              fontFamily: 'monospace', 
-              color: '#0066cc', 
+            style={{
+              fontFamily: 'monospace',
+              color: '#0066cc',
               textDecoration: 'none',
               fontSize: '0.9em'
             }}
@@ -372,11 +335,11 @@ function App() {
         </div>
         {/* Action block (AdminUI, InvestorUI, ManagerUI) */}
         {role === ROLES.OWNER && <>
-          <AdminUI contract={contract} status={status} refresh={() => window.location.reload()} loading={loading} />
-          <InvestorUI contract={contract} status={status} refresh={() => window.location.reload()} address={address} loading={loading} isAdmin={true} isManager={false} getNickname={getNickname} />
+          <AdminUI contract={contract} status={status} refresh={refresh} loading={loading} />
+          <InvestorUI contract={contract} status={status} refresh={refresh} address={address} loading={loading} isAdmin={true} isManager={false} getNickname={getNickname} />
         </>}
-        {role === ROLES.MANAGER && <ManagerUI contract={contract} status={status} refresh={() => window.location.reload()} loading={loading} managerNickname={getNickname(address)} />}
-        {(role === ROLES.INVESTOR || (address && role === ROLES.NONE)) && <InvestorUI contract={contract} status={status} refresh={() => window.location.reload()} address={address} loading={loading} isAdmin={false} isManager={false} getNickname={getNickname} />}
+        {role === ROLES.MANAGER && <ManagerUI contract={contract} status={status} refresh={refresh} loading={loading} managerNickname={getNickname(address)} />}
+        {(role === ROLES.INVESTOR || (address && role === ROLES.NONE)) && <InvestorUI contract={contract} status={status} refresh={refresh} address={address} loading={loading} isAdmin={false} isManager={false} getNickname={getNickname} />}
         {/* Tables section */}
         <StatusDashboard status={status} loading={loading} getNickname={getNickname} managerDetails={managerDetails} />
         <InvestorTable investors={investorDetails} />
@@ -390,7 +353,6 @@ function App() {
 
 function StatusDashboard({ status, loading, getNickname, managerDetails }) {
   if (loading) return <div>Loading contract status...</div>;
-  // Calculate total revenue across all proposals
   const totalRevenue = status.proposals.reduce((sum, p) => sum + (p.revenueReceived ?? 0n), 0n);
   return (
     <div style={{ marginBottom: 16 }}>
@@ -399,15 +361,15 @@ function StatusDashboard({ status, loading, getNickname, managerDetails }) {
         <tbody>
           <tr>
             <th style={{ textAlign: 'left', padding: 4, background: '#eee', width: 200, fontWeight: 500, borderBottom: '1px solid #eee' }}>Total Funds</th>
-            <td style={{ padding: 4, borderBottom: '1px solid #eee' }}>{ethers.formatEther(status.totalFunds)}</td>
+            <td style={{ padding: 4, borderBottom: '1px solid #eee' }}>{ethers.formatEther(status.totalFunds)} ETH</td>
           </tr>
           <tr>
             <th style={{ textAlign: 'left', padding: 4, background: '#eee', fontWeight: 500, borderBottom: '1px solid #eee' }}>Free Funds</th>
-            <td style={{ padding: 4, borderBottom: '1px solid #eee' }}>{ethers.formatEther(status.freeFunds)}</td>
+            <td style={{ padding: 4, borderBottom: '1px solid #eee' }}>{ethers.formatEther(status.freeFunds)} ETH</td>
           </tr>
           <tr>
             <th style={{ textAlign: 'left', padding: 4, background: '#eee', fontWeight: 500, borderBottom: '1px solid #eee' }}>Total Revenue</th>
-            <td style={{ padding: 4, borderBottom: '1px solid #eee' }}>{ethers.formatEther(totalRevenue)}</td>
+            <td style={{ padding: 4, borderBottom: '1px solid #eee' }}>{ethers.formatEther(totalRevenue)} ETH</td>
           </tr>
           <tr>
             <th style={{ textAlign: 'left', padding: 4, background: '#eee', fontWeight: 500, borderBottom: '1px solid #eee' }}>Approval Threshold</th>
@@ -441,8 +403,8 @@ function InvestorTable({ investors }) {
           {investors.map((inv, i) => (
             <tr key={i}>
               <td style={{ padding: 4 }}>{inv.nickname || (inv.addr ? inv.addr.slice(0, 6) + '...' + inv.addr.slice(-4) : '')}</td>
-              <td style={{ textAlign: 'right', padding: 4 }}>{Number(ethers.formatEther(inv.fundsInvested ?? 0n))}</td>
-              <td style={{ textAlign: 'right', padding: 4 }}>{Number(ethers.formatEther(inv.profit ?? 0n))}</td>
+              <td style={{ textAlign: 'right', padding: 4 }}>{ethers.formatEther(inv.fundsInvested ?? 0n)} ETH</td>
+              <td style={{ textAlign: 'right', padding: 4 }}>{ethers.formatEther(inv.profit ?? 0n)} ETH</td>
               <td style={{ textAlign: 'right', padding: 4 }}>{inv.profitRate !== undefined ? Number(inv.profitRate).toFixed(1) + '%' : '-'}</td>
             </tr>
           ))}
@@ -454,7 +416,6 @@ function InvestorTable({ investors }) {
 
 function ProposalsTable({ proposals, getNickname, canVote, onVote, votedProposals, investorDetails, totalFunds, approveShareThreshold }) {
   if (!proposals.length) return <div>No proposals yet.</div>;
-  // Helper to get funded amount for an address
   const getFundsInvested = (addr) => {
     const found = investorDetails.find(i => i.addr.toLowerCase() === addr.toLowerCase());
     return found ? found.fundsInvested ?? 0n : 0n;
@@ -472,30 +433,27 @@ function ProposalsTable({ proposals, getNickname, canVote, onVote, votedProposal
             <th style={{ textAlign: 'right', padding: 4 }}>Approve Share</th>
             <th style={{ textAlign: 'center', padding: 4 }}>Secured</th>
             <th style={{ textAlign: 'right', padding: 4 }}>Revenue Received</th>
-            <th style={{ textAlign: 'right', padding: 4 }}>Revenue Payed</th>
+            <th style={{ textAlign: 'right', padding: 4 }}>Revenue Paid</th>
             <th style={{ textAlign: 'center', padding: 4 }}>Actions</th>
           </tr>
         </thead>
         <tbody>
           {proposals.map((p, i) => {
-            // Calculate approveShare as sum of fundsInvested for all approvers
             const approveShare = (p.approvers || []).reduce((sum, addr) => sum + getFundsInvested(addr), 0n);
             let approveSharePct = '-';
             if (totalFunds && totalFunds > 0n) {
               approveSharePct = ((Number(approveShare) / Number(totalFunds)) * 100).toFixed(1) + '%';
             }
-            const revenueReceived = Number(ethers.formatEther(p.revenueReceived ?? 0n));
-            const revenuePayed = Number(ethers.formatEther(p.revenuePayed ?? 0n));
             return (
               <tr key={i}>
                 <td style={{ padding: 4 }}>{i}</td>
                 <td style={{ padding: 4 }}>{p.description}</td>
                 <td style={{ padding: 4 }}>{getNickname && p.manager ? getNickname(p.manager) : ''}</td>
-                <td style={{ textAlign: 'right', padding: 4 }}>{Number(ethers.formatEther(p.requiredFunds ?? 0n))}</td>
+                <td style={{ textAlign: 'right', padding: 4 }}>{ethers.formatEther(p.requiredFunds ?? 0n)} ETH</td>
                 <td style={{ textAlign: 'right', padding: 4 }}>{approveSharePct}</td>
                 <td style={{ textAlign: 'center', padding: 4 }}>{p.secured ? 'Yes' : 'No'}</td>
-                <td style={{ textAlign: 'right', padding: 4 }}>{revenueReceived}</td>
-                <td style={{ textAlign: 'right', padding: 4 }}>{revenuePayed}</td>
+                <td style={{ textAlign: 'right', padding: 4 }}>{ethers.formatEther(p.revenueReceived ?? 0n)} ETH</td>
+                <td style={{ textAlign: 'right', padding: 4 }}>{ethers.formatEther(p.revenuePaid ?? 0n)} ETH</td>
                 <td style={{ textAlign: 'center', padding: 4 }}>
                   {canVote && !p.secured && !votedProposals[i] && (
                     <button style={buttonStyle} onClick={() => onVote(i)}>Vote</button>
@@ -528,8 +486,8 @@ function ManagersTable({ managers }) {
           {managers.map((m, i) => (
             <tr key={i}>
               <td style={{ padding: 4 }}>{m.nickname || (m.addr ? m.addr.slice(0, 6) + '...' + m.addr.slice(-4) : '')}</td>
-              <td style={{ textAlign: 'right', padding: 4 }}>{Number(ethers.formatEther(m.fundsSecured ?? 0n))}</td>
-              <td style={{ textAlign: 'right', padding: 4 }}>{Number(ethers.formatEther(m.profit ?? 0n))}</td>
+              <td style={{ textAlign: 'right', padding: 4 }}>{ethers.formatEther(m.fundsSecured ?? 0n)} ETH</td>
+              <td style={{ textAlign: 'right', padding: 4 }}>{ethers.formatEther(m.profit ?? 0n)} ETH</td>
               <td style={{ textAlign: 'right', padding: 4 }}>{m.profitRate !== undefined ? Number(m.profitRate).toFixed(1) + '%' : '-'}</td>
             </tr>
           ))}
@@ -560,7 +518,7 @@ function InvestorUI({ contract, status, refresh, address, loading, isAdmin, isMa
       <h2 style={{ textAlign: 'center', fontSize: '1.4em' }}>{isAdmin ? (isManager ? 'Manager' : 'Investor') : isManager ? 'Manager' : 'Investor'} Actions</h2>
       <input
         type="number"
-        placeholder="Amount"
+        placeholder="Amount (ETH)"
         value={depositAmount}
         onChange={e => setDepositAmount(e.target.value)}
         disabled={loading}
@@ -604,7 +562,7 @@ function ManagerUI({ contract, status, refresh, loading, managerNickname }) {
   const receivePayment = async () => {
     setTxStatus('Receiving payment...');
     try {
-      const tx = await contract.recieveRevenue(Number(selectedProposal), { value: ethers.parseEther(payment) });
+      const tx = await contract.receiveRevenue(Number(selectedProposal), { value: ethers.parseEther(payment) });
       await tx.wait();
       setTxStatus('Payment received!');
       refresh();
@@ -635,7 +593,7 @@ function ManagerUI({ contract, status, refresh, loading, managerNickname }) {
       />
       <input
         type="number"
-        placeholder="Funds required"
+        placeholder="Funds required (ETH)"
         value={funds}
         onChange={e => setFunds(e.target.value)}
         disabled={loading}
@@ -654,7 +612,7 @@ function ManagerUI({ contract, status, refresh, loading, managerNickname }) {
       <br /><br />
       <input
         type="number"
-        placeholder="Revenue payment"
+        placeholder="Revenue payment (ETH)"
         value={payment}
         onChange={e => setPayment(e.target.value)}
         disabled={loading}
@@ -751,13 +709,13 @@ function AdminUI({ contract, status, refresh, loading }) {
   return (
     <div>
       <h2 style={{ textAlign: 'center', fontSize: '1.4em' }}>Admin Actions</h2>
-      
+
       {/* Add Investor Section */}
       <div style={{ marginBottom: 16, border: '1px solid #ddd', borderRadius: 8 }}>
-        <div 
-          style={{ 
-            padding: '12px 16px', 
-            background: '#f5f5f5', 
+        <div
+          style={{
+            padding: '12px 16px',
+            background: '#f5f5f5',
             cursor: 'pointer',
             borderBottom: showAddInvestor ? '1px solid #ddd' : 'none',
             borderRadius: showAddInvestor ? '8px 8px 0 0' : '8px'
@@ -833,10 +791,10 @@ function AdminUI({ contract, status, refresh, loading }) {
 
       {/* Add Manager Section */}
       <div style={{ marginBottom: 16, border: '1px solid #ddd', borderRadius: 8 }}>
-        <div 
-          style={{ 
-            padding: '12px 16px', 
-            background: '#f5f5f5', 
+        <div
+          style={{
+            padding: '12px 16px',
+            background: '#f5f5f5',
             cursor: 'pointer',
             borderBottom: showAddManager ? '1px solid #ddd' : 'none',
             borderRadius: showAddManager ? '8px 8px 0 0' : '8px'
@@ -918,15 +876,11 @@ function AdminUI({ contract, status, refresh, loading }) {
           onChange={e => setSelectedProposal(e.target.value)}
           disabled={loading || !status.proposals.length}
           style={{
-            color: 'white',
-            border: 'none',
-            borderRadius: '6px',
+            marginRight: 8,
             padding: '8px 12px',
-            fontSize: '1em',
-            cursor: 'pointer',
-            fontWeight: 'bold',
-            transition: 'all 0.2s ease',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+            borderRadius: 6,
+            border: '1px solid #ddd',
+            fontSize: '1em'
           }}
         >
           <option value="" disabled>Select proposal</option>

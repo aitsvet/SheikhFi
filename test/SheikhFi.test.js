@@ -42,7 +42,7 @@ describe("SheikhFi", function () {
     expect(charlieManagerAfter.fundsSecured).to.equal(ethers.parseEther("10"));
     const revenue = ethers.parseEther("50");
     // Charlie returns 50 ETH as revenue
-    await bank.connect(charlie).recieveRevenue(0, { value: revenue });
+    await bank.connect(charlie).receiveRevenue(0, { value: revenue });
     // Proposal revenue should be updated
     const proposalAfterRevenue = await bank.proposals(0);
     expect(proposalAfterRevenue.revenueReceived).to.equal(revenue);
