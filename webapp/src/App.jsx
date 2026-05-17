@@ -49,6 +49,15 @@ export default function App() {
     finally { setBusy(false); }
   };
 
+  const settle = async () => {
+    setBusy(true);
+    try {
+      await (await contract.settle(address)).wait();
+      refresh();
+    } catch (e) { alert('Settle failed: ' + e.message); }
+    finally { setBusy(false); }
+  };
+
   useEffect(() => {
     const prev = [
       document.body.style.background,
@@ -84,8 +93,14 @@ export default function App() {
           contractAddress={deployment.contractAddress}
           onConnect={connect}
         />
-        {address && status.myWithdrawable > 0n && (
-          <WithdrawPanel amount={status.myWithdrawable} onWithdraw={withdraw} loading={isLoading} />
+        {address && (status.myWithdrawable > 0n || status.myPending > 0n) && (
+          <WithdrawPanel
+            amount={status.myWithdrawable}
+            onWithdraw={withdraw}
+            pending={status.myPending}
+            onSettle={settle}
+            loading={isLoading}
+          />
         )}
         {role === ROLES.OWNER && <>
           <AdminUI contract={contract} status={status} refresh={refresh} loading={isLoading} />

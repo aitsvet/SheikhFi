@@ -9,6 +9,7 @@ const EMPTY = {
   proposals: [],
   approveShareThreshold: 0,
   myWithdrawable: 0n,
+  myPending: 0n,
 };
 
 export function useContractStatus(contract, address) {
@@ -57,6 +58,10 @@ export function useContractStatus(contract, address) {
       } catch {}
       if (address) {
         try { s.myWithdrawable = await contract.withdrawable(address); } catch {}
+        try {
+          const [myPending] = await contract.pendingAccrual(address);
+          s.myPending = myPending;
+        } catch {}
       }
       setStatus(s);
       setLoading(false);

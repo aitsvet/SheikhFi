@@ -65,22 +65,28 @@ describe("SheikhFi", function () {
 
     it("withdrawable balances credited after distribution", async function () {
       const { bank, ali, bob, charlie, revenue } = await deployWithDistribution();
+      // investor revenue is lazily accrued — must settle before reading withdrawable
+      await bank.settle(ali.address);
+      await bank.settle(bob.address);
       const charlieW = await bank.withdrawable(charlie.address);
       const aliW     = await bank.withdrawable(ali.address);
       const bobW     = await bank.withdrawable(bob.address);
       expect(charlieW).to.be.gt(0n);
       expect(aliW).to.be.gt(0n);
       expect(bobW).to.be.gt(0n);
-      // Charlie's withdrawable = proposal funding (10 ETH via approveProposal)
-      //                        + manager fee    (10 ETH via distributeRevenue)
-      // Ali + Bob together hold the investor revenue (40 ETH)
-      // Grand total = 60 ETH = revenue (50) + proposal funding (10)
+      // Charlie: proposal funding (10 ETH) + manager fee (10 ETH)
+      // Ali + Bob: investor revenue (40 ETH), split by share and rate
+      // Grand total ≈ 60 ETH (≤ a few wei may stay unclaimable from accumulator truncation)
       const proposalFunding = ethers.parseEther("10");
-      expect(charlieW + aliW + bobW).to.equal(revenue + proposalFunding);
+      const total = charlieW + aliW + bobW;
+      expect(total).to.be.lte(revenue + proposalFunding);
+      expect(total).to.be.gte(revenue + proposalFunding - 20n);
     });
 
     it("withdraw transfers correct ETH to each participant", async function () {
       const { bank, ali, bob, charlie } = await deployWithDistribution();
+      await bank.settle(ali.address);
+      await bank.settle(bob.address);
       const charlieW = await bank.withdrawable(charlie.address);
       const aliW     = await bank.withdrawable(ali.address);
       const bobW     = await bank.withdrawable(bob.address);
@@ -91,6 +97,9 @@ describe("SheikhFi", function () {
 
     it("withdrawable is zeroed after withdrawal", async function () {
       const { bank, ali, bob, charlie } = await deployWithDistribution();
+      // settle first so withdraw() _accrue is a no-op and causes no late credits
+      await bank.settle(ali.address);
+      await bank.settle(bob.address);
       await bank.connect(charlie).withdraw();
       await bank.connect(ali).withdraw();
       await bank.connect(bob).withdraw();
@@ -101,11 +110,15 @@ describe("SheikhFi", function () {
 
     it("profit accounting fields match withdrawable amounts", async function () {
       const { bank, ali, bob, charlie, revenue } = await deployWithDistribution();
+      await bank.settle(ali.address);
+      await bank.settle(bob.address);
       const aliProfit     = (await bank.investors(ali.address)).profit;
       const bobProfit     = (await bank.investors(bob.address)).profit;
       const charlieProfit = (await bank.managers(charlie.address)).profit;
       expect(charlieProfit).to.equal(revenue * 20n / 100n);
-      expect(aliProfit + bobProfit + charlieProfit).to.equal(revenue);
+      const investorSum = aliProfit + bobProfit + charlieProfit;
+      expect(investorSum).to.be.lte(revenue);
+      expect(investorSum).to.be.gte(revenue - 20n);
     });
   });
 
@@ -199,7 +212,7 @@ describe("SheikhFi", function () {
 
   describe("distributeRevenue — pull payments & dust sweep", function () {
     it("BadReceiver investor does not block distribution", async function () {
-      const { bank, ali, bob, charlie, dave } = await deployWithDeposits();
+      const { bank, ali, bob, charlie } = await deployWithDeposits();
 
       const BadReceiver = await ethers.getContractFactory("BadReceiver");
       const bad = await BadReceiver.deploy();
@@ -215,16 +228,19 @@ describe("SheikhFi", function () {
       // Must not revert even though BadReceiver would revert on ETH push
       await expect(bank.connect(ali).distributeRevenue(0)).to.not.be.reverted;
 
-      // BadReceiver's share was credited, not lost
+      // Settle BadReceiver's lazy accrual — callable by anyone
+      await bank.settle(badAddr);
+
+      // BadReceiver's share was credited
       expect(await bank.withdrawable(badAddr)).to.be.gt(0n);
 
-      // Other investors can still withdraw
+      // Other investors can still withdraw (withdraw() auto-accrues)
       await expect(bank.connect(bob).withdraw()).to.not.be.reverted;
       await expect(bank.connect(ali).withdraw()).to.not.be.reverted;
     });
 
-    it("dust from integer division goes entirely to owner", async function () {
-      // 3 equal-share investors, 0% manager fee → any rounding lands with owner
+    it("accumulator leaves at most a few wei unclaimable (no rounding to owner)", async function () {
+      // 3 equal-share investors — any per-share truncation stays in contract, not credited to owner
       const { bank, ali, bob, charlie, dave } = await deployFixture();
       await bank.connect(ali).addInvestor(bob.address, "Bob", 90);
       await bank.connect(ali).addInvestor(dave.address, "Dave", 90);
@@ -235,17 +251,23 @@ describe("SheikhFi", function () {
       await bank.connect(dave).depositFunds({ value: ethers.parseEther("1") });
 
       await bank.connect(charlie).submitProposal("Test", ethers.parseEther("1"));
-      // ali + bob together = 66.7% > 60%, fund the proposal
       await bank.connect(ali).approveProposal(0);
       await bank.connect(bob).approveProposal(0);
       await bank.connect(charlie).receiveRevenue(0, { value: ethers.parseEther("1") });
       await bank.connect(ali).distributeRevenue(0);
 
+      // Settle all investors
+      await bank.settle(ali.address);
+      await bank.settle(bob.address);
+      await bank.settle(dave.address);
+
       const aliW  = await bank.withdrawable(ali.address);
       const bobW  = await bank.withdrawable(bob.address);
       const daveW = await bank.withdrawable(dave.address);
-      // No wei leaked — total must equal exactly 1 ETH
-      expect(aliW + bobW + daveW).to.equal(ethers.parseEther("1"));
+      // Total claimable ≈ 1 ETH; at most a few wei stay unclaimable due to truncation
+      const total = aliW + bobW + daveW;
+      expect(total).to.be.lte(ethers.parseEther("1"));
+      expect(total).to.be.gte(ethers.parseEther("1") - 10n);
     });
 
     it("second distribute on same proposal reverts (CEI guard)", async function () {
@@ -288,6 +310,144 @@ describe("SheikhFi", function () {
       await bank.connect(charlie).withdraw();
       await expect(bank.connect(charlie).withdraw())
         .to.be.revertedWith("Nothing to withdraw");
+    });
+  });
+
+  describe("Accumulator (PR 3)", function () {
+    it("distributeRevenue gas does not grow with investor count", async function () {
+      const signers = await ethers.getSigners();
+      const SheikhFi = await ethers.getContractFactory("SheikhFi");
+      const bank = await SheikhFi.deploy("Ali", 5);
+      await bank.waitForDeployment();
+      const ali = signers[0];
+      const charlie = signers[1];
+
+      await bank.connect(ali).addManager(charlie.address, "Charlie", 0);
+      await bank.connect(ali).depositFunds({ value: ethers.parseEther("10") });
+
+      // Warmup: initialize cumulativePerShare so both measurements start from nonzero state
+      await bank.connect(charlie).submitProposal("Warmup", ethers.parseEther("1"));
+      await bank.connect(ali).approveProposal(0);
+      await bank.connect(charlie).receiveRevenue(0, { value: ethers.parseEther("2") });
+      await bank.connect(ali).distributeRevenue(0);
+
+      // Measure gas with 1 investor
+      await bank.connect(charlie).submitProposal("A", ethers.parseEther("1"));
+      await bank.connect(ali).approveProposal(1);
+      await bank.connect(charlie).receiveRevenue(1, { value: ethers.parseEther("5") });
+      const r1 = await (await bank.connect(ali).distributeRevenue(1)).wait();
+      const gas1 = r1.gasUsed;
+
+      // Add 17 more investors (total 18; stays within 20 signer limit)
+      for (let i = 2; i < 19; i++) {
+        await bank.connect(ali).addInvestor(signers[i].address, `Inv${i}`, 90);
+        await bank.connect(signers[i]).depositFunds({ value: ethers.parseEther("1") });
+      }
+
+      // Measure gas with 18 investors
+      await bank.connect(charlie).submitProposal("B", ethers.parseEther("1"));
+      await bank.connect(ali).approveProposal(2);
+      await bank.connect(charlie).receiveRevenue(2, { value: ethers.parseEther("5") });
+      const r2 = await (await bank.connect(ali).distributeRevenue(2)).wait();
+      const gas2 = r2.gasUsed;
+
+      // gas difference < 10% of gas1 — accumulator is O(1)
+      const diff = gas2 > gas1 ? gas2 - gas1 : gas1 - gas2;
+      expect(diff).to.be.lt(gas1 / 10n);
+    });
+
+    it("late-joining investor does NOT claim past revenue", async function () {
+      const { bank, ali, charlie, dave } = await deployWithDistribution();
+      // Add Dave after the distribution has already happened
+      await bank.connect(ali).addInvestor(dave.address, "Dave", 90);
+      await bank.connect(dave).depositFunds({ value: ethers.parseEther("5") });
+      await bank.settle(dave.address);
+      expect((await bank.investors(dave.address)).profit).to.equal(0n);
+      expect(await bank.withdrawable(dave.address)).to.equal(0n);
+    });
+
+    it("withdraw triggers accrue automatically", async function () {
+      const { bank, ali } = await deployWithDistribution();
+      // Ali has never called settle — withdraw() should auto-accrue
+      await expect(bank.connect(ali).withdraw()).to.not.be.reverted;
+      expect((await bank.investors(ali.address)).profit).to.be.gt(0n);
+      expect(await bank.withdrawable(ali.address)).to.equal(0n);
+    });
+
+    it("multiple distributions accumulate correctly", async function () {
+      const { bank, ali, bob, charlie } = await deployWithFundedProposal();
+
+      const rev1 = ethers.parseEther("20");
+      await bank.connect(charlie).receiveRevenue(0, { value: rev1 });
+      await bank.connect(ali).distributeRevenue(0);
+
+      const rev2 = ethers.parseEther("30");
+      await bank.connect(charlie).receiveRevenue(0, { value: rev2 });
+      await bank.connect(ali).distributeRevenue(0);
+
+      await bank.settle(bob.address);
+      const bobProfit = (await bank.investors(bob.address)).profit;
+
+      // Bob has 20/30 share, 95% rate, across total investor revenue = (20+30)*80% = 40 ETH
+      const totalInvestorRev = (rev1 + rev2) * 80n / 100n;
+      const expectedBob = totalInvestorRev * 20n * 95n / (30n * 100n);
+      expect(bobProfit).to.be.gte(expectedBob - 100n);
+      expect(bobProfit).to.be.lte(expectedBob);
+    });
+
+    it("personalized profit rates respected", async function () {
+      const [ali, bob, charlie] = await ethers.getSigners();
+      const SheikhFi = await ethers.getContractFactory("SheikhFi");
+      const bank = await SheikhFi.deploy("Ali", 60);
+      await bank.waitForDeployment();
+
+      // Two investors with equal shares but different rates
+      await bank.connect(ali).addInvestor(bob.address, "Bob", 80);
+      await bank.connect(ali).addManager(charlie.address, "Charlie", 0);
+
+      await bank.connect(ali).depositFunds({ value: ethers.parseEther("10") });
+      await bank.connect(bob).depositFunds({ value: ethers.parseEther("10") });
+
+      await bank.connect(charlie).submitProposal("Test", ethers.parseEther("1"));
+      await bank.connect(bob).approveProposal(0);
+
+      await bank.connect(charlie).receiveRevenue(0, { value: ethers.parseEther("20") });
+      await bank.connect(ali).distributeRevenue(0);
+
+      await bank.settle(ali.address);
+      await bank.settle(bob.address);
+
+      const aliProfit = (await bank.investors(ali.address)).profit;
+      const bobProfit = (await bank.investors(bob.address)).profit;
+
+      // Ali: rate=100, share=10/20; Bob: rate=80, share=10/20; total investor rev = 20 ETH
+      // ali gross = 10 ETH → ali keeps 10 ETH + 2 ETH owner cut from Bob = 12 ETH
+      // bob gross = 10 ETH → bob keeps 8 ETH
+      expect(aliProfit).to.be.gte(ethers.parseEther("12") - 10n);
+      expect(bobProfit).to.be.gte(ethers.parseEther("8") - 10n);
+      expect(bobProfit).to.be.lt(ethers.parseEther("10"));
+      expect(aliProfit).to.be.gt(bobProfit);
+    });
+
+    it("settle is idempotent", async function () {
+      const { bank, bob } = await deployWithDistribution();
+      await bank.settle(bob.address);
+      const w1 = await bank.withdrawable(bob.address);
+      const p1 = (await bank.investors(bob.address)).profit;
+      // second settle should not change anything
+      await bank.settle(bob.address);
+      expect(await bank.withdrawable(bob.address)).to.equal(w1);
+      expect((await bank.investors(bob.address)).profit).to.equal(p1);
+    });
+
+    it("checkpoint is set at addInvestor time (zero-share investor accrues nothing)", async function () {
+      const { bank, ali, charlie, dave } = await deployWithDistribution();
+      // Add Dave after distribution — checkpoint set to current cumulativePerShare
+      await bank.connect(ali).addInvestor(dave.address, "Dave", 90);
+      // Settle without depositing — zero fundsInvested, should have zero accrual
+      await bank.settle(dave.address);
+      expect((await bank.investors(dave.address)).profit).to.equal(0n);
+      expect(await bank.withdrawable(dave.address)).to.equal(0n);
     });
   });
 

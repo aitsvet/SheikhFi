@@ -9,11 +9,15 @@ contract SheikhFi {
     uint public totalFunds;
     uint public freeFunds;
 
+    uint constant SCALE = 1e18;
+    uint public cumulativePerShare;
+
     struct Investor {
         string nickname;
         uint profitRate;
         uint fundsInvested;
         uint profit;
+        uint checkpoint;
     }
     mapping(address => Investor) public investors;
     address[] public investorAddresses;
@@ -70,7 +74,7 @@ contract SheikhFi {
         owner = msg.sender;
         ownerNickname = _ownerNickname;
         investorAddresses.push(msg.sender);
-        investors[msg.sender] = Investor(_ownerNickname, 100, 0, 0);
+        investors[msg.sender] = Investor(_ownerNickname, 100, 0, 0, cumulativePerShare);
         approveShareThreshold = _approveShareThreshold;
     }
 
@@ -80,7 +84,7 @@ contract SheikhFi {
         require(bytes(nickname).length != 0, "Empty nickname");
         require(!isInvestor(investor), "Already investor");
         investorAddresses.push(investor);
-        investors[investor] = Investor(nickname, profitRate, 0, 0);
+        investors[investor] = Investor(nickname, profitRate, 0, 0, cumulativePerShare);
         emit InvestorAdded(investor, nickname, profitRate);
     }
 
@@ -94,8 +98,40 @@ contract SheikhFi {
         emit ManagerAdded(manager, nickname, profitRate);
     }
 
+    function _accrue(address inv) internal {
+        Investor storage i = investors[inv];
+        if (i.fundsInvested == 0) {
+            i.checkpoint = cumulativePerShare;
+            return;
+        }
+        uint delta = cumulativePerShare - i.checkpoint;
+        if (delta == 0) return;
+        uint gross = delta * i.fundsInvested / SCALE;
+        uint myPart = gross * i.profitRate / 100;
+        uint ownerPart = gross - myPart;
+        withdrawable[inv] += myPart;
+        i.profit += myPart;
+        if (inv != owner) {
+            withdrawable[owner] += ownerPart;
+            investors[owner].profit += ownerPart;
+        }
+        i.checkpoint = cumulativePerShare;
+    }
+
+    function settle(address inv) external {
+        require(isInvestor(inv), "Not investor");
+        _accrue(inv);
+    }
+
+    function settleBatch(address[] calldata invs) external {
+        for (uint i = 0; i < invs.length; i++) {
+            if (isInvestor(invs[i])) _accrue(invs[i]);
+        }
+    }
+
     function depositFunds() external payable onlyInvestor {
         require(msg.value > 0, "No value");
+        _accrue(msg.sender);
         investors[msg.sender].fundsInvested += msg.value;
         totalFunds += msg.value;
         freeFunds += msg.value;
@@ -146,7 +182,7 @@ contract SheikhFi {
     function distributeRevenue(uint proposalId) external onlyOwner {
         uint revenue = proposals[proposalId].revenueReceived - proposals[proposalId].revenuePaid;
         require(revenue > 0, "No revenue");
-        // CEI: mark paid before any state changes
+        require(totalFunds > 0, "No investors");
         proposals[proposalId].revenuePaid = proposals[proposalId].revenueReceived;
 
         address manager = proposals[proposalId].manager;
@@ -156,32 +192,15 @@ contract SheikhFi {
         withdrawable[manager] += managerFee;
         managers[manager].profit += managerFee;
 
-        uint distributed = managerFee;
-        for (uint i = 0; i < investorAddresses.length; i++) {
-            address inv = investorAddresses[i];
-            uint payout = investorRevenue * investors[inv].fundsInvested / totalFunds;
-            if (payout > 0) {
-                uint investorPayout = payout * investors[inv].profitRate / 100;
-                uint ownerPayout = payout - investorPayout;
-                withdrawable[inv] += investorPayout;
-                investors[inv].profit += investorPayout;
-                withdrawable[owner] += ownerPayout;
-                investors[owner].profit += ownerPayout;
-                distributed += investorPayout + ownerPayout;
-            }
-        }
-
-        // sweep rounding dust to the owner
-        uint dust = revenue - distributed;
-        if (dust > 0) {
-            withdrawable[owner] += dust;
-            investors[owner].profit += dust;
+        if (investorRevenue > 0) {
+            cumulativePerShare += investorRevenue * SCALE / totalFunds;
         }
 
         emit RevenueDistributed(proposalId, revenue);
     }
 
     function withdraw() external {
+        if (isInvestor(msg.sender)) _accrue(msg.sender);
         uint amount = withdrawable[msg.sender];
         require(amount > 0, "Nothing to withdraw");
         withdrawable[msg.sender] = 0;
@@ -192,5 +211,14 @@ contract SheikhFi {
 
     function getApprovers(uint proposalId) public view returns (address[] memory) {
         return approvers[proposalId];
+    }
+
+    function pendingAccrual(address inv) external view returns (uint myPending, uint ownerPending) {
+        Investor storage i = investors[inv];
+        if (i.fundsInvested == 0) return (0, 0);
+        uint delta = cumulativePerShare - i.checkpoint;
+        uint gross = delta * i.fundsInvested / SCALE;
+        myPending = gross * i.profitRate / 100;
+        ownerPending = (inv == owner) ? 0 : gross - myPending;
     }
 }
