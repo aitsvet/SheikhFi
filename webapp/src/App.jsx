@@ -41,6 +41,7 @@ function App() {
     managerAddresses: [],
     proposals: [],
     approveShareThreshold: 0,
+    myWithdrawable: 0n,
   });
   const [loading, setLoading] = useState(false);
   const [investorDetails, setInvestorDetails] = useState([]);
@@ -161,7 +162,11 @@ function App() {
         }));
         proposalCount = propCount;
       } catch {}
-      setStatus({ totalFunds, freeFunds, proposalCount, investorAddresses, managerAddresses, proposals, approveShareThreshold });
+      let myWithdrawable = 0n;
+      if (address) {
+        try { myWithdrawable = await contract.withdrawable(address); } catch {}
+      }
+      setStatus({ totalFunds, freeFunds, proposalCount, investorAddresses, managerAddresses, proposals, approveShareThreshold, myWithdrawable });
       setLoading(false);
     })();
   }, [contract, refreshKey]);
@@ -235,6 +240,19 @@ function App() {
     } catch (e) {
       setLoading(false);
       alert('Vote failed: ' + e.message);
+    }
+  };
+
+  const withdraw = async () => {
+    setLoading(true);
+    try {
+      const tx = await contract.withdraw();
+      await tx.wait();
+      setLoading(false);
+      refresh();
+    } catch (e) {
+      setLoading(false);
+      alert('Withdraw failed: ' + e.message);
     }
   };
 
@@ -333,6 +351,13 @@ function App() {
             <button onClick={connectWallet} style={buttonStyle}>Connect MetaMask</button>
           )}
         </div>
+        {/* Withdraw panel — shown to anyone with a non-zero withdrawable balance */}
+        {address && status.myWithdrawable > 0n && (
+          <div style={{ marginBottom: 16, padding: 12, background: '#f0f8ff', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Available to withdraw: <strong>{ethers.formatEther(status.myWithdrawable)} ETH</strong></span>
+            <button onClick={withdraw} disabled={loading} style={buttonStyle}>Withdraw</button>
+          </div>
+        )}
         {/* Action block (AdminUI, InvestorUI, ManagerUI) */}
         {role === ROLES.OWNER && <>
           <AdminUI contract={contract} status={status} refresh={refresh} loading={loading} />

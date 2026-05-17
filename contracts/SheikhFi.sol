@@ -39,6 +39,8 @@ contract SheikhFi {
     address[][] public approvers;      // list of investors who approved the proposal
     uint public approveShareThreshold; // approvers share required for the proposal to be funded
 
+    mapping(address => uint) public withdrawable;
+
     event InvestorAdded(address indexed investor, string nickname, uint profitRate);
     event ManagerAdded(address indexed manager, string nickname, uint profitRate);
     event FundsDeposited(address indexed investor, uint amount);
@@ -46,6 +48,7 @@ contract SheikhFi {
     event ProposalFunded(uint indexed proposalId, address indexed manager, uint fundsRequired);
     event RevenueReceived(uint indexed proposalId, address indexed manager, uint amount);
     event RevenueDistributed(uint indexed proposalId, uint revenue);
+    event Withdrawn(address indexed account, uint amount);
 
     function isInvestor(address addr) public view returns (bool) {
         return bytes(investors[addr].nickname).length > 0;
@@ -123,11 +126,10 @@ contract SheikhFi {
         // if the approve share exceeds threshold, the proposal is funded
         if (approveShare * 100 / totalFunds >= approveShareThreshold) {
             address manager = proposals[proposalId].manager;
-            // CEI: update all state before the external transfer
             freeFunds -= fundsRequired;
             proposals[proposalId].secured = true;
             managers[manager].fundsSecured += fundsRequired;
-            payable(manager).transfer(fundsRequired);
+            withdrawable[manager] += fundsRequired;
             emit ProposalFunded(proposalId, manager, fundsRequired);
         }
     }
@@ -142,33 +144,50 @@ contract SheikhFi {
 
     // owner distributes the revenue to the investors and the manager
     function distributeRevenue(uint proposalId) external onlyOwner {
-        // calculate the revenue not yet distributed
         uint revenue = proposals[proposalId].revenueReceived - proposals[proposalId].revenuePaid;
         require(revenue > 0, "No revenue");
-        // CEI: mark paid before transfers
+        // CEI: mark paid before any state changes
         proposals[proposalId].revenuePaid = proposals[proposalId].revenueReceived;
-        // distribute the manager fee
+
         address manager = proposals[proposalId].manager;
         uint managerFee = revenue * managers[manager].profitRate / 100;
         uint investorRevenue = revenue - managerFee;
-        payable(manager).transfer(managerFee);
+
+        withdrawable[manager] += managerFee;
         managers[manager].profit += managerFee;
-        // distribute the investor profits
+
+        uint distributed = managerFee;
         for (uint i = 0; i < investorAddresses.length; i++) {
             address inv = investorAddresses[i];
             uint payout = investorRevenue * investors[inv].fundsInvested / totalFunds;
             if (payout > 0) {
-                // distribute the investor profit (rate can be personalized)
                 uint investorPayout = payout * investors[inv].profitRate / 100;
-                payable(inv).transfer(investorPayout);
-                investors[inv].profit += investorPayout;
-                // distribute the owner profit (e.g. to cover operational costs)
                 uint ownerPayout = payout - investorPayout;
-                payable(owner).transfer(ownerPayout);
+                withdrawable[inv] += investorPayout;
+                investors[inv].profit += investorPayout;
+                withdrawable[owner] += ownerPayout;
                 investors[owner].profit += ownerPayout;
+                distributed += investorPayout + ownerPayout;
             }
         }
+
+        // sweep rounding dust to the owner
+        uint dust = revenue - distributed;
+        if (dust > 0) {
+            withdrawable[owner] += dust;
+            investors[owner].profit += dust;
+        }
+
         emit RevenueDistributed(proposalId, revenue);
+    }
+
+    function withdraw() external {
+        uint amount = withdrawable[msg.sender];
+        require(amount > 0, "Nothing to withdraw");
+        withdrawable[msg.sender] = 0;
+        (bool ok, ) = payable(msg.sender).call{value: amount}("");
+        require(ok, "Transfer failed");
+        emit Withdrawn(msg.sender, amount);
     }
 
     function getApprovers(uint proposalId) public view returns (address[] memory) {
