@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { ethers } from 'ethers';
 
 export const WEI = 10n ** 18n;

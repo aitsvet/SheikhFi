@@ -72,6 +72,9 @@ export function useWallet(deployment) {
       window.ethereum.removeListener?.('accountsChanged', onAccounts);
       window.ethereum.removeListener?.('chainChanged', onChain);
     };
+  // _build closes over `deployment` (stable for life of app); listeners
+  // installed once on mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return { address, contract, connect, logout };

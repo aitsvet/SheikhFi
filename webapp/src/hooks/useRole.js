@@ -17,8 +17,8 @@ export function useRole(contract, address, ownerAddress) {
         setRole(ROLES.OWNER); return;
       }
       let isManager = false, isInvestor = false;
-      try { isManager = await contract.isManager(address); } catch {}
-      try { isInvestor = await contract.isInvestor(address); } catch {}
+      try { isManager = await contract.isManager(address); } catch { /* call reverted */ }
+      try { isInvestor = await contract.isInvestor(address); } catch { /* call reverted */ }
       if (isManager) setRole(ROLES.MANAGER);
       else if (isInvestor) setRole(ROLES.INVESTOR);
       else setRole(ROLES.NONE);

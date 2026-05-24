@@ -1,6 +1,8 @@
 import { Badge, Button, Card, CardHead, Empty, Kpi, Progress, formatEther } from '../ui';
 import { SCREENS, useStore } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
+import deploymentJson from '../abi/deployment.json';
+import { networkFor } from '../networks';
 
 function OverviewKpis() {
   const { totalFunds, freeFunds, totalRevenue, approveShareThreshold, proposals } = useStore();
@@ -22,6 +24,7 @@ function OverviewKpis() {
 export default function OverviewScreen() {
   const { proposals, investors, managers, getNickname,
           approvalShareFor, approveShareThreshold, setScreen } = useStore();
+  const net = networkFor(deploymentJson);
 
   const top = [...proposals]
     .map((p, i) => ({ ...p, _id: i, share: approvalShareFor(p) }))
@@ -36,7 +39,7 @@ export default function OverviewScreen() {
       <PageHead
         crumb="Workspace"
         title="Overview"
-        lede="Pooled-capital partnership running on Polygon Amoy. Every funded project is backed by a real asset and approved by the partners."
+        lede={`Pooled-capital partnership running on ${net.name}. Every funded project is backed by a real asset and approved by the partners.`}
         actions={<WithdrawPill />}
       />
 

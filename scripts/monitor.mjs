@@ -10,11 +10,28 @@ const rpc = process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org';
 const provider = new ethers.JsonRpcProvider(rpc);
 const c = new ethers.Contract(dep.contractAddress, dep.abi, provider);
 
-const tracked = {
-  owner:    dep.owner,
-  charlie:  '0xE0b43D1a7463A8eE7b5b2E85cA7FAea15e16b26D',
-  bob:      '0xeB16c289caEE412258E327EE2949209790AaB44e',
-};
+// Tracked addresses come from the contract itself + any extra addresses
+// passed on the CLI (`node scripts/monitor.mjs 0xA 0xB`). Owner is always
+// included. Investors and managers are read live so the monitor stays
+// useful as the membership grows.
+async function initTracked() {
+  const out = { owner: dep.owner };
+  for (const a of process.argv.slice(2)) out[a.toLowerCase().slice(0, 8)] = a;
+  try {
+    const ic = Number(await c.getInvestorCount());
+    for (let i = 0; i < ic; i++) {
+      const a = await c.investorAddresses(i);
+      if (a.toLowerCase() !== dep.owner.toLowerCase()) out['inv-' + a.slice(2, 6)] = a;
+    }
+    const mc = Number(await c.getManagerCount());
+    for (let i = 0; i < mc; i++) {
+      const a = await c.managerAddresses(i);
+      out['mgr-' + a.slice(2, 6)] = a;
+    }
+  } catch (e) { console.log('warn: could not enumerate members:', e.shortMessage || e.message); }
+  return out;
+}
+const tracked = await initTracked();
 
 const fmt = (wei) => ethers.formatEther(wei);
 const short = (a) => a.slice(0, 6) + '…' + a.slice(-4);

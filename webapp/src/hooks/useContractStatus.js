@@ -42,7 +42,7 @@ export function useContractStatus(contract, address) {
           Array.from({ length: propCount }, async (_, i) => {
             const p = await contract.proposals(i);
             let approvers = [];
-            try { approvers = await contract.getApprovers(i); } catch {}
+            try { approvers = await contract.getApprovers(i); } catch { /* method missing on older ABI */ }
             return {
               manager: p[0],
               description: p[1],
@@ -55,17 +55,19 @@ export function useContractStatus(contract, address) {
           })
         );
         s.proposalCount = propCount;
-      } catch {}
+      } catch { /* method missing on older ABI */ }
       if (address) {
-        try { s.myWithdrawable = await contract.withdrawable(address); } catch {}
+        try { s.myWithdrawable = await contract.withdrawable(address); } catch { /* method missing on older ABI */ }
         try {
           const [myPending] = await contract.pendingAccrual(address);
           s.myPending = myPending;
-        } catch {}
+        } catch { /* method missing on older ABI */ }
       }
       setStatus(s);
       setLoading(false);
     })();
+  // address intentionally excluded — refresh() bumps refreshKey on connect.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contract, refreshKey]);
 
   return { status, loading, refresh };
