@@ -1,42 +1,61 @@
-const { ethers } = require("hardhat");
+const { ethers, network } = require("hardhat");
 const fs = require("fs");
 const path = require("path");
 
 async function main() {
-  const [owner, bob, charlie] = await ethers.getSigners();
+  const signers = await ethers.getSigners();
+  const owner = signers[0];
   const ownerNickname = "Ali";
-  const bobNickname = "Bob";
-  const charlieNickname = "Charlie";
+
+  console.log(`Network: ${network.name} (chainId ${network.config.chainId ?? 'n/a'})`);
+  console.log(`Deployer: ${owner.address}`);
+  const balance = await ethers.provider.getBalance(owner.address);
+  console.log(`Balance: ${ethers.formatEther(balance)} ETH`);
+
   const SheikhFi = await ethers.getContractFactory("SheikhFi");
   const contract = await SheikhFi.deploy(ownerNickname, 60);
   await contract.waitForDeployment();
   const contractAddress = await contract.getAddress();
-  await contract.connect(owner).addInvestor(bob.address, bobNickname, 95);
-  await contract.connect(owner).addManager(charlie.address, charlieNickname, 20);
-  console.log("SheikhFi deployed to:", contractAddress);
-  console.log("Owner:", owner.address, "Nickname:", ownerNickname);
-  console.log("Bob (Investor):", bob.address, "Nickname:", bobNickname);
-  console.log("Charlie (Manager):", charlie.address, "Nickname:", charlieNickname);
+  console.log(`SheikhFi deployed to: ${contractAddress}`);
 
-  const artifactPath = path.join(__dirname, 'artifacts/contracts/SheikhFi.sol/SheikhFi.json');
-  const artifact = JSON.parse(fs.readFileSync(artifactPath));
-  const abi = artifact.abi;
   const frontendConfig = {
     contractAddress,
-    abi,
+    abi: JSON.parse(fs.readFileSync(
+      path.join(__dirname, 'artifacts/contracts/SheikhFi.sol/SheikhFi.json'),
+    )).abi,
     owner: owner.address,
     ownerNickname,
-    manager: charlie.address,
-    bob: bob.address,
-    bobNickname,
-    charlieNickname,
+    network: network.name,
+    chainId: network.config.chainId ?? null,
   };
+
+  // Local hardhat: seed Bob (investor) + Charlie (manager) using the
+  // built-in second/third signers so the demo flow is ready out of the box.
+  if (signers.length >= 3) {
+    const [, bob, charlie] = signers;
+    const bobNickname     = "Bob";
+    const charlieNickname = "Charlie";
+    await (await contract.connect(owner).addInvestor(bob.address, bobNickname, 95)).wait();
+    await (await contract.connect(owner).addManager(charlie.address, charlieNickname, 20)).wait();
+    console.log(`Bob (Investor):     ${bob.address}`);
+    console.log(`Charlie (Manager):  ${charlie.address}`);
+    Object.assign(frontendConfig, {
+      manager: charlie.address,
+      bob: bob.address,
+      bobNickname,
+      charlieNickname,
+    });
+  } else {
+    console.log('Single-signer network — skipping addInvestor/addManager.');
+    console.log('Use the Council desk in the webapp to onboard partners and operators.');
+  }
+
   const configPath = path.join(__dirname, 'webapp/src/abi/deployment.json');
   fs.writeFileSync(configPath, JSON.stringify(frontendConfig, null, 2));
-  console.log("Deployment info (with ABI) written to webapp/src/abi/deployment.json");
+  console.log(`Wrote ${configPath}`);
 }
 
 main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
-}); 
+});

@@ -1,8 +1,10 @@
 {
   "name": "hardhat-project",
   "devDependencies": {
+    "@coinbase/cdp-sdk": "^1.50.0",
     "@nomicfoundation/hardhat-toolbox": "^6.0.0",
     "chai": "^4.5.0",
+    "dotenv": "^17.4.2",
     "ethers": "^6.15.0",
     "hardhat": "^2.25.0"
   }

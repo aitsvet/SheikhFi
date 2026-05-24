@@ -1,9 +1,36 @@
 import { useEffect, useState } from 'react';
 import { ethers } from 'ethers';
+import { networkFor } from '../networks';
+
+async function ensureChain(net) {
+  if (!net.chainIdHex) return;
+  try {
+    await window.ethereum.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: net.chainIdHex }],
+    });
+  } catch (err) {
+    if (err.code === 4902) {
+      await window.ethereum.request({
+        method: 'wallet_addEthereumChain',
+        params: [{
+          chainId: net.chainIdHex,
+          chainName: net.name,
+          rpcUrls: net.rpcUrls,
+          nativeCurrency: net.nativeCurrency,
+          blockExplorerUrls: net.explorer ? [net.explorer] : [],
+        }],
+      });
+    } else {
+      throw err;
+    }
+  }
+}
 
 export function useWallet(deployment) {
   const [address, setAddress] = useState('');
   const [contract, setContract] = useState();
+  const net = networkFor(deployment);
 
   const _build = async (provider) => {
     const signer = await provider.getSigner();
@@ -16,7 +43,8 @@ export function useWallet(deployment) {
     if (!window.ethereum) { alert('MetaMask is required!'); return; }
     const provider = new ethers.BrowserProvider(window.ethereum);
     await provider.send('eth_requestAccounts', []);
-    await _build(provider);
+    try { await ensureChain(net); } catch (e) { alert(`Switch network: ${e.message || e}`); return; }
+    await _build(new ethers.BrowserProvider(window.ethereum));
   };
 
   const logout = () => { setAddress(''); setContract(undefined); };
@@ -27,14 +55,23 @@ export function useWallet(deployment) {
       try {
         const accounts = await window.ethereum.request({ method: 'eth_accounts' });
         if (accounts?.length) await _build(new ethers.BrowserProvider(window.ethereum));
-      } catch {}
+      } catch { /* not connected */ }
     })();
-    const handler = async (accounts) => {
+    const onAccounts = async (accounts) => {
       if (!accounts.length) logout();
       else await _build(new ethers.BrowserProvider(window.ethereum));
     };
-    window.ethereum.on('accountsChanged', handler);
-    return () => window.ethereum.removeListener?.('accountsChanged', handler);
+    const onChain = () => {
+      if (window.ethereum?.selectedAddress) {
+        _build(new ethers.BrowserProvider(window.ethereum));
+      }
+    };
+    window.ethereum.on('accountsChanged', onAccounts);
+    window.ethereum.on('chainChanged', onChain);
+    return () => {
+      window.ethereum.removeListener?.('accountsChanged', onAccounts);
+      window.ethereum.removeListener?.('chainChanged', onChain);
+    };
   }, []);
 
   return { address, contract, connect, logout };
