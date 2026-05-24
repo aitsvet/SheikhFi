@@ -11,6 +11,17 @@ export function formatEther(wei) {
   return trimmed ? `${w}.${trimmed}` : w;
 }
 
+// Full-precision formatter for amounts a user is about to act on (withdraw,
+// settle, deposit). Trailing zeros trimmed but no truncation — every wei
+// shown so 0.00000123 is visible instead of rounding to 0.
+export function formatEtherExact(wei) {
+  if (wei === undefined || wei === null) return '0';
+  const n = typeof wei === 'bigint' ? wei : BigInt(wei);
+  const full = ethers.formatEther(n);
+  if (!full.includes('.')) return full;
+  return full.replace(/0+$/, '').replace(/\.$/, '');
+}
+
 export function parseEther(str) {
   if (!str) return 0n;
   return ethers.parseEther(String(str));

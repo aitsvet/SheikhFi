@@ -1,6 +1,5 @@
-import { Button } from '../ui';
+import { Button, formatEtherExact } from '../ui';
 import { useStore } from '../state';
-import { formatEther } from '../ui';
 
 export function PageHead({ crumb, title, lede, actions }) {
   return (
@@ -22,11 +21,11 @@ export function WithdrawPill() {
   return (
     <div className="wallet-pill">
       <span>Available</span>
-      <span className="num">{formatEther(withdrawable)} ETH</span>
+      <span className="num">{formatEtherExact(withdrawable)} ETH</span>
       {pending > 0n && (
         <>
           <span style={{ color: 'var(--ink-3)' }}>· pending</span>
-          <span className="num">{formatEther(pending)}</span>
+          <span className="num">{formatEtherExact(pending)} ETH</span>
         </>
       )}
       <Button size="sm" variant="primary"
