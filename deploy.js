@@ -16,7 +16,9 @@ async function main() {
   const contract = await SheikhFi.deploy(ownerNickname, 60);
   await contract.waitForDeployment();
   const contractAddress = await contract.getAddress();
-  console.log(`SheikhFi deployed to: ${contractAddress}`);
+  const deployTx = contract.deploymentTransaction();
+  const deployBlock = deployTx ? (await deployTx.wait()).blockNumber : null;
+  console.log(`SheikhFi deployed to: ${contractAddress} (block ${deployBlock})`);
 
   const frontendConfig = {
     contractAddress,
@@ -27,6 +29,7 @@ async function main() {
     ownerNickname,
     network: network.name,
     chainId: network.config.chainId ?? null,
+    deployBlock,
   };
 
   // Local hardhat: seed Bob (investor) + Charlie (manager) using the

@@ -748,5 +748,6 @@
   "owner": "0xb853A9B863886F421204DcA86CB56dc3416Fc807",
   "ownerNickname": "Ali",
   "network": "baseSepolia",
-  "chainId": 84532
+  "chainId": 84532,
+  "deployBlock": 41929901
 }

@@ -4,6 +4,7 @@ import { useWallet } from './hooks/useWallet';
 import { useContractStatus } from './hooks/useContractStatus';
 import { useRole, ROLES } from './hooks/useRole';
 import { useDetails } from './hooks/useDetails';
+import { useEvents } from './hooks/useEvents';
 import deployment from './abi/deployment.json';
 import { shortAddr } from './ui';
 
@@ -14,6 +15,7 @@ export const SCREENS = {
   PROPOSALS: 'proposals',
   TREASURY:  'treasury',
   MEMBERS:   'members',
+  ACTIVITY:  'activity',
   DESK:      'desk',
 };
 
@@ -35,6 +37,10 @@ export function StoreProvider({ children }) {
   const [screen, setScreen] = useState(SCREENS.OVERVIEW);
   const [busy, setBusy]     = useState(false);
   const [tx, setTx]         = useState({ msg: '', tone: '' });
+  const [eventsKey, setEventsKey] = useState(0);
+  const { events, loading: eventsLoading } = useEvents(
+    contract, deployment.deployBlock, eventsKey
+  );
 
   const identity = useMemo(() => ({
     role,
@@ -76,6 +82,7 @@ export function StoreProvider({ children }) {
       if (txResp?.wait) await txResp.wait();
       setTx({ msg: `${label} — done.`, tone: 'ok' });
       refresh();
+      setEventsKey(k => k + 1);
     } catch (e) {
       setTx({ msg: `${label} failed: ${e.shortMessage || e.message || e}`, tone: 'err' });
     } finally {
@@ -135,6 +142,7 @@ export function StoreProvider({ children }) {
     withdraw, settle,
     getNickname, approvalShareFor,
     busy, loading, tx, setTx, refresh,
+    events, eventsLoading,
   };
 
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>;

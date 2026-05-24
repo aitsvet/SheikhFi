@@ -17,7 +17,7 @@ function NavItem({ active, label, count, onClick }) {
 
 export default function Sidebar() {
   const { identity, connect, screen, setScreen,
-          proposals, investors, managers } = useStore();
+          proposals, investors, managers, events } = useStore();
   const net = networkFor(deployment);
 
   const deskLabel = identity.role === ROLES.OWNER    ? 'Council desk'
@@ -65,6 +65,12 @@ export default function Sidebar() {
           label="Members"
           count={investors.length + managers.length}
           onClick={() => setScreen(SCREENS.MEMBERS)}
+        />
+        <NavItem
+          active={screen === SCREENS.ACTIVITY}
+          label="Activity"
+          count={events?.length}
+          onClick={() => setScreen(SCREENS.ACTIVITY)}
         />
       </div>
 
