@@ -198,7 +198,7 @@ webapp/
       useRole.js
       useEvents.js        чтение и декодирование всех событий контракта от deployBlock (чанками по 800)
     abi/deployment.json   адрес контракта, ABI, owner, chainId, network (пишется deploy.js)
-    bg.png                фон, бандлируется vite-ом как хешированный asset
+    bg.webp               фон, бандлируется vite-ом как хешированный asset
 assets/, index.html       артефакты сборки, опубликованные на gh-pages
 .env.example              шаблон переменных окружения
 ```
