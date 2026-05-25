@@ -17,7 +17,9 @@ on white surfaces, the way CryptoSarf uses its gold/green.
   JetBrains Mono, declares the full design-token set in `:root`,
   defines base CSS for the shell, then pulls in React 18, Babel
   standalone, and the JSX modules below in order.
-- `bg.webp` — background texture (copied from the gh-pages branch).
+- Background texture is loaded from `../webapp/src/bg.webp` so source
+  of truth stays in one place; the prototype opens via `file://` so a
+  relative path is sufficient.
 - `app/ui.jsx` — primitives (Card, CardHead, Button, Field, Input,
   Select, Badge, **Kpi**, **SectionRule**, **Avatar**, **Progress**,
   Empty, TxStatus) plus `formatEther` / `parseEther` / `shortAddr` /
