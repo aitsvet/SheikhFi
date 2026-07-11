@@ -11,6 +11,9 @@ const EVENT_META = {
   ProposalSubmitted:  { tone: 'warn', label: 'Proposal submitted' },
   ProposalApproved:   { tone: 'blue', label: 'Vote cast' },
   ProposalFunded:     { tone: 'ok',   label: 'Proposal secured' },
+  ProposalCancelled:  { tone: '',     label: 'Proposal cancelled' },
+  ThresholdChanged:   { tone: 'warn', label: 'Threshold changed' },
+  VotingPeriodChanged:{ tone: 'warn', label: 'Voting period changed' },
   RevenueReceived:    { tone: 'blue', label: 'Revenue received' },
   RevenueDistributed: { tone: 'ok',   label: 'Revenue distributed' },
   Withdrawn:          { tone: '',     label: 'Withdrawn' },
@@ -49,6 +52,12 @@ function describe(ev, getNickname) {
       return (<>
         Proposal <strong>#{a[0].toString()}</strong> secured for <strong>{getNickname(a[1]) || shortAddr(a[1])}</strong> · <span className="num">{formatEtherExact(a[2])} ETH</span> earmarked
       </>);
+    case 'ProposalCancelled':
+      return (<>Proposal <strong>#{a[0].toString()}</strong> cancelled</>);
+    case 'ThresholdChanged':
+      return (<>Approval threshold set to <span className="num">{a[0].toString()}%</span></>);
+    case 'VotingPeriodChanged':
+      return (<>Voting period set to <span className="num">{(Number(a[0]) / 86400).toFixed(0)} days</span></>);
     case 'RevenueReceived':
       return (<>
         <strong>{getNickname(a[1]) || shortAddr(a[1])}</strong> delivered <span className="num">{formatEtherExact(a[2])} ETH</span> revenue on proposal <strong>#{a[0].toString()}</strong>

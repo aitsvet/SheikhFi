@@ -26,6 +26,14 @@ const ROLE_LABEL = {
   [ROLES.NONE]:     'Guest',
 };
 
+// A proposal that can still be voted on. The v2 lifecycle fields are
+// undefined on the older deployed ABI — such proposals count as open.
+export function isOpenProposal(p) {
+  if (p.secured || p.cancelled === true) return false;
+  if (p.deadline !== undefined && Number(p.deadline) * 1000 < Date.now()) return false;
+  return true;
+}
+
 const StoreCtx = createContext(null);
 
 export function StoreProvider({ children }) {
@@ -63,10 +71,14 @@ export function StoreProvider({ children }) {
 
   const approvalShareFor = useCallback((p) => {
     if (!totalFunds || totalFunds === 0n) return 0;
-    const approveShare = (p.approvers || []).reduce((s, a) => {
-      const inv = investors.find(i => i.addr.toLowerCase() === a.toLowerCase());
-      return s + (inv?.fundsInvested ?? 0n);
-    }, 0n);
+    // v2 contract stores the frozen vote weight; fall back to a live
+    // recomputation for the older deployed ABI
+    const approveShare = p.approvalWeight !== undefined
+      ? p.approvalWeight
+      : (p.approvers || []).reduce((s, a) => {
+          const inv = investors.find(i => i.addr.toLowerCase() === a.toLowerCase());
+          return s + (inv?.fundsInvested ?? 0n);
+        }, 0n);
     return Number((approveShare * 1000n) / totalFunds) / 10;
   }, [investors, totalFunds]);
 
@@ -110,6 +122,10 @@ export function StoreProvider({ children }) {
     run('Approve proposal', () => contract.approveProposal(Number(proposalId))),
     [contract, run]
   );
+  const cancelProposal = useCallback((proposalId) =>
+    run('Cancel proposal', () => contract.cancelProposal(Number(proposalId))),
+    [contract, run]
+  );
   const receiveRevenue = useCallback((proposalId, amountWei) => {
     // ABI on Polygon Amoy carries the original typo `recieveRevenue`; new
     // deployments use the fixed name. Use whichever the bound contract has.
@@ -138,7 +154,7 @@ export function StoreProvider({ children }) {
     withdrawable: status.myWithdrawable || 0n,
     pending:      status.myPending      || 0n,
     addInvestor, addManager, depositFunds, submitProposal,
-    approveProposal, receiveRevenue, distributeRevenue,
+    approveProposal, cancelProposal, receiveRevenue, distributeRevenue,
     withdraw, settle,
     getNickname, approvalShareFor,
     busy, loading, tx, setTx, refresh,

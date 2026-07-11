@@ -4,7 +4,7 @@ import {
   Progress, SectionRule, Select, TxStatus,
   formatEther, parseEther, shortAddr,
 } from '../ui';
-import { ROLES, useStore } from '../state';
+import { ROLES, isOpenProposal, useStore } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
 import { ProposalCard } from './Proposals';
 import deploymentJson from '../abi/deployment.json';
@@ -222,7 +222,7 @@ function PartnerDesk() {
 
   const pendingProps = proposals
     .map((p, i) => ({ ...p, _id: i }))
-    .filter(p => !p.secured);
+    .filter(isOpenProposal);
 
   return (
     <>

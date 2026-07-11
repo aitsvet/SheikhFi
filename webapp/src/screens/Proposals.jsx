@@ -1,16 +1,24 @@
 import { useMemo, useState } from 'react';
 import { Badge, Button, Card, Empty, Progress, formatEther } from '../ui';
-import { ROLES, useStore } from '../state';
+import { ROLES, isOpenProposal, useStore } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
 
 export function ProposalCard({ p, id }) {
   const { getNickname, approvalShareFor, approveShareThreshold,
-          identity, approveProposal, busy } = useStore();
+          identity, approveProposal, cancelProposal, busy } = useStore();
   const share = approvalShareFor(p);
   const voted = identity.addr
     && (p.approvers || []).some(a => a.toLowerCase() === identity.addr.toLowerCase());
   const canVote = identity.role === ROLES.OWNER || identity.role === ROLES.INVESTOR;
   const settled = p.secured && p.revenuePaid >= p.revenueReceived && p.revenueReceived > 0n;
+  // v2 lifecycle fields — undefined on the older deployed ABI
+  const cancelled = p.cancelled === true;
+  const expired = !p.secured && !cancelled && p.deadline !== undefined
+    && Number(p.deadline) * 1000 < Date.now();
+  const open = !p.secured && !cancelled && !expired;
+  const canCancel = !p.secured && !cancelled
+    && (identity.role === ROLES.OWNER
+        || p.manager.toLowerCase() === identity.addr.toLowerCase());
 
   return (
     <div className="proposal">
@@ -19,8 +27,10 @@ export function ProposalCard({ p, id }) {
         <div className="meta">
           <span><strong>#{id}</strong></span>
           <span>by <strong>{getNickname(p.manager)}</strong></span>
-          {settled       ? <Badge tone="ok">Settled</Badge>
+          {cancelled     ? <Badge>Cancelled</Badge>
+           : settled     ? <Badge tone="ok">Settled</Badge>
            : p.secured   ? <Badge tone="ok">Secured</Badge>
+           : expired     ? <Badge tone="warn">Expired</Badge>
                          : <Badge tone="warn">Pending</Badge>}
           {voted && !p.secured && <Badge tone="blue">You voted</Badge>}
         </div>
@@ -43,11 +53,18 @@ export function ProposalCard({ p, id }) {
           {formatEther(p.requiredFunds)}<span className="unit"> ETH</span>
         </div>
         <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>required</div>
-        {canVote && !p.secured && !voted && (
+        {canVote && open && !voted && (
           <Button variant="primary" size="sm"
             disabled={busy}
             onClick={() => approveProposal(id)}>
             Approve
+          </Button>
+        )}
+        {canCancel && (
+          <Button size="sm"
+            disabled={busy}
+            onClick={() => cancelProposal(id)}>
+            Cancel
           </Button>
         )}
       </div>
@@ -65,7 +82,7 @@ export default function ProposalsScreen() {
   );
 
   const filtered = tagged.filter(({ p }) => {
-    if (filter === 'pending')  return !p.secured;
+    if (filter === 'pending')  return isOpenProposal(p);
     if (filter === 'secured')  return (p.secured && p.revenuePaid < p.revenueReceived) || (p.secured && p.revenueReceived === 0n);
     if (filter === 'settled')  return p.secured && p.revenueReceived > 0n && p.revenuePaid >= p.revenueReceived;
     return true;
@@ -73,7 +90,7 @@ export default function ProposalsScreen() {
 
   const counts = {
     all:      tagged.length,
-    pending:  tagged.filter(({ p }) => !p.secured).length,
+    pending:  tagged.filter(({ p }) => isOpenProposal(p)).length,
     secured:  tagged.filter(({ p }) => p.secured && (p.revenueReceived === 0n || p.revenuePaid < p.revenueReceived)).length,
     settled:  tagged.filter(({ p }) => p.secured && p.revenueReceived > 0n && p.revenuePaid >= p.revenueReceived).length,
   };

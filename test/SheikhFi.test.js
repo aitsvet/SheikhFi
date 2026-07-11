@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 // ---------- fixtures ----------
 
@@ -681,6 +682,105 @@ describe("SheikhFi", function () {
         .to.not.be.reverted;
       expect(await bank.withdrawable(ali.address)).to.be.gt(0n);
       expect(await bank.withdrawable(bob.address)).to.be.gt(0n);
+    });
+  });
+
+  describe("Proposal lifecycle (PLAN §1)", function () {
+    it("vote weight is frozen at vote time — later deposits do not inflate it", async function () {
+      const { bank, ali, bob } = await deployWithProposal();
+      // Ali votes with 10 of 30 ETH (33% < 60%)
+      await bank.connect(ali).approveProposal(0);
+      // Ali deposits 50 more — totalFunds 80, but his cast vote stays at 10
+      await bank.connect(ali).depositFunds({ value: ethers.parseEther("50") });
+      // Bob votes with 20 → approvalWeight 30, 30/80 = 37.5% < 60% → not funded
+      await bank.connect(bob).approveProposal(0);
+      const p = await bank.proposals(0);
+      expect(p.approvalWeight).to.equal(ethers.parseEther("30"));
+      expect(p.secured).to.be.false;
+    });
+
+    it("voting closes after the deadline", async function () {
+      const { bank, bob } = await deployWithProposal();
+      await time.increase(30 * 24 * 3600 + 1);
+      await expect(bank.connect(bob).approveProposal(0))
+        .to.be.revertedWith("Voting closed");
+    });
+
+    it("deadline follows the configured votingPeriod", async function () {
+      const { bank, ali, charlie } = await deployWithDeposits();
+      await bank.connect(ali).setVotingPeriod(2 * 24 * 3600);
+      await bank.connect(charlie).submitProposal("Short window", ethers.parseEther("1"));
+      await time.increase(2 * 24 * 3600 + 1);
+      await expect(bank.connect(ali).approveProposal(0))
+        .to.be.revertedWith("Voting closed");
+    });
+
+    it("manager cancels own pending proposal; votes on it revert", async function () {
+      const { bank, ali, charlie } = await deployWithProposal();
+      await expect(bank.connect(charlie).cancelProposal(0))
+        .to.emit(bank, "ProposalCancelled").withArgs(0);
+      await expect(bank.connect(ali).approveProposal(0))
+        .to.be.revertedWith("Cancelled");
+    });
+
+    it("owner can cancel; strangers cannot; no double cancel", async function () {
+      const { bank, ali, bob } = await deployWithProposal();
+      await expect(bank.connect(bob).cancelProposal(0))
+        .to.be.revertedWith("Not authorized");
+      await bank.connect(ali).cancelProposal(0);
+      await expect(bank.connect(ali).cancelProposal(0))
+        .to.be.revertedWith("Cancelled");
+    });
+
+    it("secured proposal cannot be cancelled", async function () {
+      const { bank, ali } = await deployWithFundedProposal();
+      await expect(bank.connect(ali).cancelProposal(0))
+        .to.be.revertedWith("Already funded");
+    });
+
+    it("setters: owner-only, bounds enforced, events emitted", async function () {
+      const { bank, ali, bob } = await deployFixture();
+      await expect(bank.connect(bob).setApproveShareThreshold(50))
+        .to.be.revertedWith("Not owner");
+      await expect(bank.connect(bob).setVotingPeriod(7 * 24 * 3600))
+        .to.be.revertedWith("Not owner");
+      await expect(bank.connect(ali).setApproveShareThreshold(0))
+        .to.be.revertedWith("Bad threshold");
+      await expect(bank.connect(ali).setApproveShareThreshold(101))
+        .to.be.revertedWith("Bad threshold");
+      await expect(bank.connect(ali).setVotingPeriod(3600))
+        .to.be.revertedWith("Bad period");
+      await expect(bank.connect(ali).setVotingPeriod(366 * 24 * 3600))
+        .to.be.revertedWith("Bad period");
+      await expect(bank.connect(ali).setApproveShareThreshold(75))
+        .to.emit(bank, "ThresholdChanged").withArgs(75);
+      expect(await bank.approveShareThreshold()).to.equal(75n);
+      await expect(bank.connect(ali).setVotingPeriod(7 * 24 * 3600))
+        .to.emit(bank, "VotingPeriodChanged").withArgs(7 * 24 * 3600);
+      expect(await bank.votingPeriod()).to.equal(BigInt(7 * 24 * 3600));
+    });
+
+    it("vote gas does not grow with the number of prior votes", async function () {
+      const signers = await ethers.getSigners();
+      const SheikhFi = await ethers.getContractFactory("SheikhFi");
+      const bank = await SheikhFi.deploy("Ali", 100);
+      await bank.waitForDeployment();
+      const [ali, charlie] = [signers[0], signers[1]];
+      await bank.connect(ali).addManager(charlie.address, "Charlie", 0);
+      await bank.connect(ali).depositFunds({ value: ethers.parseEther("1") });
+      for (let i = 2; i < 19; i++) {
+        await bank.connect(ali).addInvestor(signers[i].address, `Inv${i}`, 90);
+        await bank.connect(signers[i]).depositFunds({ value: ethers.parseEther("1") });
+      }
+      await bank.connect(charlie).submitProposal("Gas probe", ethers.parseEther("1"));
+      const gasOf = async (signer) =>
+        (await (await bank.connect(signer).approveProposal(0)).wait()).gasUsed;
+      await gasOf(signers[2]); // warmup: first vote initialises approvalWeight
+      const gEarly = await gasOf(signers[3]);
+      for (let i = 4; i < 17; i++) await gasOf(signers[i]);
+      const gLate = await gasOf(signers[17]);
+      const diff = gLate > gEarly ? gLate - gEarly : gEarly - gLate;
+      expect(diff).to.be.lt(gEarly / 10n);
     });
   });
 

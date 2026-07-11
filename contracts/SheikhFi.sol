@@ -38,10 +38,15 @@ contract SheikhFi {
         bool secured;
         uint revenueReceived;
         uint revenuePaid;
+        uint approvalWeight;           // sum of approvers' stakes, frozen at vote time
+        uint deadline;                 // voting closes at this timestamp
+        bool cancelled;
     }
     Proposal[] public proposals;
     address[][] public approvers;      // list of investors who approved the proposal
+    mapping(uint => mapping(address => bool)) public hasVoted;
     uint public approveShareThreshold; // approvers share required for the proposal to be funded
+    uint public votingPeriod = 30 days;
 
     mapping(address => uint) public withdrawable;
 
@@ -51,6 +56,9 @@ contract SheikhFi {
     event ProposalSubmitted(uint indexed proposalId, address indexed manager, string description, uint fundsRequired);
     event ProposalApproved(uint indexed proposalId, address indexed investor, uint approveShare);
     event ProposalFunded(uint indexed proposalId, address indexed manager, uint fundsRequired);
+    event ProposalCancelled(uint indexed proposalId);
+    event ThresholdChanged(uint threshold);
+    event VotingPeriodChanged(uint period);
     event RevenueReceived(uint indexed proposalId, address indexed manager, uint amount);
     event RevenueDistributed(uint indexed proposalId, uint revenue);
     event Withdrawn(address indexed account, uint amount);
@@ -143,34 +151,58 @@ contract SheikhFi {
         require(bytes(description).length != 0, "Empty description");
         require(requiredFunds <= freeFunds, "Insufficient funds");
         uint proposalId = proposals.length;
-        proposals.push(Proposal(msg.sender, description, requiredFunds, false, 0, 0));
+        proposals.push(Proposal(
+            msg.sender, description, requiredFunds, false, 0, 0,
+            0, block.timestamp + votingPeriod, false
+        ));
         approvers.push();
         emit ProposalSubmitted(proposalId, msg.sender, description, requiredFunds);
     }
 
     function approveProposal(uint proposalId) external onlyInvestor {
         require(totalFunds > 0, "No investors");
-        uint fundsRequired = proposals[proposalId].fundsRequired;
-        require(fundsRequired <= freeFunds, "Insufficient funds");
-        require(!proposals[proposalId].secured, "Already funded");
-        // calculate the total funds invested by the approvers
-        uint approveShare = investors[msg.sender].fundsInvested;
-        for (uint i = 0; i < approvers[proposalId].length; i++) {
-            address approver = approvers[proposalId][i];
-            require(approver != msg.sender, "Already voted");
-            approveShare += investors[approver].fundsInvested;
-        }
+        Proposal storage p = proposals[proposalId];
+        require(!p.cancelled, "Cancelled");
+        require(block.timestamp <= p.deadline, "Voting closed");
+        require(p.fundsRequired <= freeFunds, "Insufficient funds");
+        require(!p.secured, "Already funded");
+        require(!hasVoted[proposalId][msg.sender], "Already voted");
+        hasVoted[proposalId][msg.sender] = true;
         approvers[proposalId].push(msg.sender);
-        emit ProposalApproved(proposalId, msg.sender, approveShare);
+        // each vote's weight is frozen at vote time: later deposits or exits
+        // do not inflate or deflate votes already cast
+        p.approvalWeight += investors[msg.sender].fundsInvested;
+        emit ProposalApproved(proposalId, msg.sender, p.approvalWeight);
         // if the approve share exceeds threshold, the proposal is funded
-        if (approveShare * 100 / totalFunds >= approveShareThreshold) {
-            address manager = proposals[proposalId].manager;
-            freeFunds -= fundsRequired;
-            proposals[proposalId].secured = true;
-            managers[manager].fundsSecured += fundsRequired;
-            withdrawable[manager] += fundsRequired;
-            emit ProposalFunded(proposalId, manager, fundsRequired);
+        if (p.approvalWeight * 100 / totalFunds >= approveShareThreshold) {
+            address manager = p.manager;
+            freeFunds -= p.fundsRequired;
+            p.secured = true;
+            managers[manager].fundsSecured += p.fundsRequired;
+            withdrawable[manager] += p.fundsRequired;
+            emit ProposalFunded(proposalId, manager, p.fundsRequired);
         }
+    }
+
+    function cancelProposal(uint proposalId) external {
+        Proposal storage p = proposals[proposalId];
+        require(msg.sender == p.manager || msg.sender == owner, "Not authorized");
+        require(!p.secured, "Already funded");
+        require(!p.cancelled, "Cancelled");
+        p.cancelled = true;
+        emit ProposalCancelled(proposalId);
+    }
+
+    function setApproveShareThreshold(uint t) external onlyOwner {
+        require(t >= 1 && t <= 100, "Bad threshold");
+        approveShareThreshold = t;
+        emit ThresholdChanged(t);
+    }
+
+    function setVotingPeriod(uint p) external onlyOwner {
+        require(p >= 1 days && p <= 365 days, "Bad period");
+        votingPeriod = p;
+        emit VotingPeriodChanged(p);
     }
 
     // manager receives revenue from the investment in real-world asset

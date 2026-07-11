@@ -50,6 +50,10 @@ export function useContractStatus(contract, address) {
               secured: p[3],
               revenueReceived: p[4],
               revenuePaid: p[5],
+              // v2 fields — undefined on the older deployed ABI
+              approvalWeight: p.approvalWeight,
+              deadline: p.deadline,
+              cancelled: p.cancelled,
               approvers,
             };
           })
