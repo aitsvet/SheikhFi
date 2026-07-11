@@ -103,6 +103,9 @@ Polygon Amoy (`0x408f311ff021e4bba7a3088b6a1c4af1a9c23994`). Веб-прилож
 (`docker-compose.yml`, node 20.19.0, репозиторий примонтирован):
 
 ```bash
+# всё сразу: тесты + coverage + lint + build + контейнерный e2e
+./scripts/verify.sh
+
 docker compose run --rm node 'npm ci && npx hardhat test'
 docker compose run --rm node 'cd webapp && npm ci && npm run lint && npm run build'
 
@@ -203,13 +206,15 @@ e2e/
 deploy.js                 скрипт деплоя (поддерживает localhost и baseSepolia)
 hardhat.config.js         сети: hardhat / localhost / baseSepolia / amoy; оптимизатор; ключи из .env
 docker-compose.yml        compose-тулбокс: docker compose run --rm node '<cmd>' (node 20.19.0)
-STANDARDS.md              трассировка механизмов контракта на пункты AAOIFI с цитатами
-PLAN.md                   спецификации крупных изменений (жизненный цикл, ownership, экономика v2, e2e)
+AGENTS.md                 метод репозитория: рабочий цикл, чек-лист аудита, как повторить с другим бизнес-процессом
+STANDARDS.md              трассировка: требование → пункт AAOIFI (цитата) → реализация → тесты
+PLAN.md                   спецификации волн для исполнителя; выполненное схлопнуто до записей
 scripts/
   faucet.mjs              CDP-faucet → деплойер или указанные адреса на Base Sepolia (0.0001 ETH каждому)
   onboard.mjs             addInvestor / addManager от имени Council
   monitor.mjs             фоновый tail контракта: предложения, голоса, ревенью, балансы (5-секундный опрос)
   use-deployment.mjs      переключение активного деплоя на deployments/<chainId>.json
+  verify.sh               полный прогон: тесты + coverage + lint + build + e2e, всё в контейнерах
 webapp/
   src/
     ui.jsx                примитивы интерфейса + formatEther/parseEther/shortAddr
