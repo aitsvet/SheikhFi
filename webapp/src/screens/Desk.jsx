@@ -11,7 +11,8 @@ import deploymentJson from '../abi/deployment.json';
 import { networkFor } from '../networks';
 
 function CouncilDesk() {
-  const { addInvestor, addManager, investors, managers, tx, busy } = useStore();
+  const { addInvestor, addManager, investors, managers,
+          totalFunds, freeFunds, tx, busy } = useStore();
   const [invAddr, setInvAddr] = useState('');
   const [invNick, setInvNick] = useState('');
   const [invRate, setInvRate] = useState('');
@@ -39,8 +40,8 @@ function CouncilDesk() {
       <div className="kpis">
         <Kpi label="Partners"  value={investors.length} hint="Musharaka" />
         <Kpi label="Operators" value={managers.length}  hint="Mudaraba" />
-        <Kpi label="Default partner rate"  value={Number(investors[0]?.profitRate ?? 35)} unit="%" />
-        <Kpi label="Default operator rate" value={Number(managers[0]?.profitRate  ?? 50)} unit="%" />
+        <Kpi label="Total funds" value={formatEther(totalFunds)} unit="ETH" hint="Pooled by partners" />
+        <Kpi label="Free funds"  value={formatEther(freeFunds)}  unit="ETH" hint="Available to deploy" />
       </div>
 
       <div className="grid-2">
@@ -98,7 +99,7 @@ function CouncilDesk() {
 }
 
 function OperatorDesk() {
-  const { identity, proposals, submitProposal, receiveRevenue, tx, busy } = useStore();
+  const { identity, proposals, managers, submitProposal, receiveRevenue, tx, busy } = useStore();
   const [desc, setDesc] = useState('');
   const [funds, setFunds] = useState('');
   const [payment, setPayment] = useState('');
@@ -111,6 +112,8 @@ function OperatorDesk() {
 
   const totalRequired = mine.reduce((s, p) => s + p.requiredFunds, 0n);
   const totalReceived = mine.reduce((s, p) => s + (p.revenueReceived ?? 0n), 0n);
+  const myRate = managers.find(m =>
+    m.addr.toLowerCase() === identity.addr.toLowerCase())?.profitRate ?? 0n;
 
   const doSubmit = async () => {
     await submitProposal(desc, parseEther(funds));
@@ -133,7 +136,7 @@ function OperatorDesk() {
         <Kpi label="My projects" value={mine.length} hint={`${mySecured.length} secured`} />
         <Kpi label="Capital secured" value={formatEther(totalRequired)} unit="ETH" />
         <Kpi label="Revenue delivered" value={formatEther(totalReceived)} unit="ETH" />
-        <Kpi label="My profit rate" value={50} unit="%" hint="Per contract" />
+        <Kpi label="My profit rate" value={Number(myRate)} unit="%" hint="Per contract" />
       </div>
 
       <div className="grid-2">

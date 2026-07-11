@@ -61,10 +61,11 @@ export function useWallet(deployment) {
       if (!accounts.length) logout();
       else await _build(new ethers.BrowserProvider(window.ethereum));
     };
-    const onChain = () => {
-      if (window.ethereum?.selectedAddress) {
-        _build(new ethers.BrowserProvider(window.ethereum));
-      }
+    const onChain = async () => {
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        if (accounts?.length) await _build(new ethers.BrowserProvider(window.ethereum));
+      } catch { /* not connected */ }
     };
     window.ethereum.on('accountsChanged', onAccounts);
     window.ethereum.on('chainChanged', onChain);

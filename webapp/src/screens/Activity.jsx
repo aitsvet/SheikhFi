@@ -9,6 +9,7 @@ const EVENT_META = {
   ManagerAdded:       { tone: 'blue', label: 'Operator onboarded' },
   FundsDeposited:     { tone: 'pink', label: 'Deposit' },
   ProposalSubmitted:  { tone: 'warn', label: 'Proposal submitted' },
+  ProposalApproved:   { tone: 'blue', label: 'Vote cast' },
   ProposalFunded:     { tone: 'ok',   label: 'Proposal secured' },
   RevenueReceived:    { tone: 'blue', label: 'Revenue received' },
   RevenueDistributed: { tone: 'ok',   label: 'Revenue distributed' },
@@ -39,6 +40,10 @@ function describe(ev, getNickname) {
     case 'ProposalSubmitted':
       return (<>
         Proposal <strong>#{a[0].toString()}</strong> "{a[2]}" by <strong>{getNickname(a[1]) || shortAddr(a[1])}</strong> · requires <span className="num">{formatEtherExact(a[3])} ETH</span>
+      </>);
+    case 'ProposalApproved':
+      return (<>
+        <strong>{getNickname(a[1]) || shortAddr(a[1])}</strong> approved proposal <strong>#{a[0].toString()}</strong> · <span className="num">{formatEtherExact(a[2])} ETH</span> of weight behind it
       </>);
     case 'ProposalFunded':
       return (<>
