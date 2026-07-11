@@ -24,6 +24,10 @@ module.exports = {
     apiKey: ETHERSCAN_API_KEY || '',
   },
   networks: {
+    localhost: {
+      url: process.env.LOCALHOST_RPC_URL || 'http://127.0.0.1:8545',
+      chainId: 31337,
+    },
     baseSepolia: {
       url: BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org',
       chainId: 84532,

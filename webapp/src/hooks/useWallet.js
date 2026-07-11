@@ -50,7 +50,17 @@ export function useWallet(deployment) {
   const logout = () => { setAddress(''); setContract(undefined); };
 
   useEffect(() => {
-    if (!window.ethereum) return;
+    if (!window.ethereum) {
+      // No wallet: browse-only mode over a public RPC. VITE_RPC_URL wins so
+      // the containerised e2e browser can reach the compose chain service.
+      const url = import.meta.env.VITE_RPC_URL || net.rpcUrls?.[0];
+      if (url) {
+        setContract(new ethers.Contract(
+          deployment.contractAddress, deployment.abi,
+          new ethers.JsonRpcProvider(url)));
+      }
+      return;
+    }
     (async () => {
       try {
         const accounts = await window.ethereum.request({ method: 'eth_accounts' });

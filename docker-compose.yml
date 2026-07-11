@@ -16,3 +16,86 @@ services:
     volumes:
       - .:/app
     entrypoint: ["bash", "-c"]
+
+  # ------------------------------------------------------------ e2e pipeline
+  # Full local flow in containers: chain → deploy → webapp → playwright.
+  #   docker compose --profile e2e up --abort-on-container-exit e2e
+  # deploy.js switches the active deployment to 31337 — restore the demo one
+  # afterwards: docker compose run --rm node 'node scripts/use-deployment.mjs 84532'
+  chain:
+    image: node:20.19.0
+    profiles: ["e2e"]
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app
+    environment:
+      HOME: /app/.docker-home
+      npm_config_update_notifier: "false"
+    volumes:
+      - .:/app
+    command: ["bash", "-c", "npm ci --no-audit --no-fund && npx hardhat node --hostname 0.0.0.0"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e 'fetch(\"http://127.0.0.1:8545\",{method:\"POST\",headers:{\"content-type\":\"application/json\"},body:JSON.stringify({jsonrpc:\"2.0\",id:1,method:\"eth_blockNumber\",params:[]})}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'"
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+
+  deploy:
+    image: node:20.19.0
+    profiles: ["e2e"]
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app
+    environment:
+      HOME: /app/.docker-home
+      LOCALHOST_RPC_URL: http://chain:8545
+    volumes:
+      - .:/app
+    command: ["npx", "hardhat", "run", "deploy.js", "--network", "localhost"]
+    depends_on:
+      chain:
+        condition: service_healthy
+    restart: "no"
+
+  webapp:
+    image: node:20.19.0
+    profiles: ["e2e"]
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app/webapp
+    environment:
+      HOME: /app/.docker-home
+      npm_config_update_notifier: "false"
+      # baked into the bundle at build time; the e2e browser resolves `chain`
+      # on the compose network
+      VITE_RPC_URL: http://chain:8545
+    volumes:
+      - .:/app
+    command: ["bash", "-c", "npm ci --no-audit --no-fund && npm run build && npm run preview -- --host 0.0.0.0 --port 5173"]
+    depends_on:
+      deploy:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e 'fetch(\"http://127.0.0.1:5173/\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))'"
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.49.0-jammy
+    profiles: ["e2e"]
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app/e2e
+    environment:
+      HOME: /tmp
+      npm_config_update_notifier: "false"
+      WEBAPP_URL: http://webapp:5173
+    volumes:
+      - .:/app
+    command: ["bash", "-c", "npm ci --no-audit --no-fund && npx playwright test"]
+    depends_on:
+      webapp:
+        condition: service_healthy
