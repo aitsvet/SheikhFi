@@ -1,0 +1,18 @@
+# On-demand Node/Hardhat toolbox: `docker compose run --rm node '<cmd>'`.
+# Profile-gated so it never auto-starts. Examples:
+#   docker compose run --rm node 'npm ci && npx hardhat test'
+#   docker compose run --rm node 'cd webapp && npm ci && npm run lint && npm run build'
+# node_modules / artifacts / cache land in the bind-mounted repo, so
+# subsequent runs reuse them. Node pinned to the version README targets.
+services:
+  node:
+    image: node:20.19.0
+    profiles: ["tools"]
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /app
+    environment:
+      HOME: /app/.docker-home
+      npm_config_update_notifier: "false"
+    volumes:
+      - .:/app
+    entrypoint: ["bash", "-c"]
