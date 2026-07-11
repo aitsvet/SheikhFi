@@ -7,7 +7,8 @@ async function main() {
   const owner = signers[0];
   const ownerNickname = "Ali";
 
-  console.log(`Network: ${network.name} (chainId ${network.config.chainId ?? 'n/a'})`);
+  const chainId = Number((await ethers.provider.getNetwork()).chainId);
+  console.log(`Network: ${network.name} (chainId ${chainId})`);
   console.log(`Deployer: ${owner.address}`);
   const balance = await ethers.provider.getBalance(owner.address);
   console.log(`Balance: ${ethers.formatEther(balance)} ETH`);
@@ -28,7 +29,7 @@ async function main() {
     owner: owner.address,
     ownerNickname,
     network: network.name,
-    chainId: network.config.chainId ?? null,
+    chainId,
     deployBlock,
   };
 
@@ -53,9 +54,15 @@ async function main() {
     console.log('Use the Council desk in the webapp to onboard partners and operators.');
   }
 
+  // Per-chain snapshot survives deploys to other networks; deployment.json
+  // is the active copy the webapp imports. Switch with scripts/use-deployment.mjs.
+  const json = JSON.stringify(frontendConfig, null, 2);
+  const chainPath = path.join(__dirname, `webapp/src/abi/deployments/${chainId}.json`);
+  fs.mkdirSync(path.dirname(chainPath), { recursive: true });
+  fs.writeFileSync(chainPath, json);
   const configPath = path.join(__dirname, 'webapp/src/abi/deployment.json');
-  fs.writeFileSync(configPath, JSON.stringify(frontendConfig, null, 2));
-  console.log(`Wrote ${configPath}`);
+  fs.writeFileSync(configPath, json);
+  console.log(`Wrote ${chainPath} and ${configPath}`);
 }
 
 main().catch((error) => {
