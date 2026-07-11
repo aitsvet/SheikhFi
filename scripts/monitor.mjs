@@ -102,7 +102,7 @@ function diff(a, b) {
 }
 
 console.log(`Contract: ${dep.contractAddress}  via ${rpc}`);
-console.log(`Tracked: owner=${short(tracked.owner)} bob=${short(tracked.bob)} charlie=${short(tracked.charlie)}`);
+console.log(`Tracked: ${Object.entries(tracked).map(([k, a]) => `${k}=${short(a)}`).join(' ')}`);
 console.log(`Polling every 5s. Ctrl+C to stop.\n`);
 
 while (true) {
