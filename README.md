@@ -107,6 +107,7 @@ Polygon Amoy (`0x408f311ff021e4bba7a3088b6a1c4af1a9c23994`). Веб-прилож
 ./scripts/verify.sh
 
 docker compose run --rm node 'npm ci && npx hardhat test'
+docker compose run --rm node 'npx hardhat coverage'
 docker compose run --rm node 'cd webapp && npm ci && npm run lint && npm run build'
 
 # локальный демо-режим: hardhat node + посев Bob+Charlie
@@ -193,6 +194,15 @@ node scripts/monitor.mjs 0xExtra...            # плюс произвольны
 
 Список отслеживаемых читается из контракта на старте (`getInvestorCount` / `getManagerCount`), так что после онбординга нового участника достаточно перезапустить скрипт — никаких правок кода.
 
+`scripts/members.mjs` — одноразовый срез состава и балансов деплоя: owner/board/asset, инвесторы (ставка, вклад, прибыль, withdrawable, баланс газа) и управляющие (+ залог). Без аргумента читает активный деплой; с адресом — любой контракт той же формы (так переносится состав участников на новый деплой):
+
+```bash
+docker compose run --rm node 'node scripts/members.mjs'
+docker compose run --rm node 'node scripts/members.mjs 0x3743aCa3d2ED36744703C36c6AfB27B8E3A444Db'
+```
+
+Обе утилиты ходят через публичный RPC с пейсингом и ретраями на rate-limit.
+
 ## Структура репозитория
 
 ```
@@ -213,6 +223,7 @@ scripts/
   faucet.mjs              CDP-faucet → деплойер или указанные адреса на Base Sepolia (0.0001 ETH каждому)
   onboard.mjs             addInvestor / addManager от имени Council
   monitor.mjs             фоновый tail контракта: предложения, голоса, ревенью, балансы (5-секундный опрос)
+  members.mjs             одноразовый срез участников и балансов активного или указанного деплоя
   use-deployment.mjs      переключение активного деплоя на deployments/<chainId>.json
   verify.sh               полный прогон: тесты + coverage + lint + build + e2e, всё в контейнерах
 webapp/
