@@ -1,266 +1,208 @@
-# PLAN — крупные изменения SheikhFi
+# PLAN — расширения SheikhFi (v3)
 
 Спецификации для исполнителя. Каждый раздел самодостаточен: точные сигнатуры,
 инварианты, требования к тестам и критерии приёмки. Выполнять по одному
 разделу за раз, в указанном порядке; после каждого раздела — полный прогон.
 
-**Статус: §1–§5 выполнены** (см. «Отклонения от спецификации» в конце разделов,
-где реализация уточнила план). Открытая очередь — §6 «Расширения».
-
-Ссылки вида «SS 12 3/1/5/4» — пункты стандартов AAOIFI; дословные цитаты и
-статус соответствия см. в `STANDARDS.md`.
+Базовая версия — «экономика v2» (возврат тела, списание убытков, выход,
+жизненный цикл предложения, двухшаговый ownership): реализована, покрыта
+тестами и описана в README.md; трассировка на стандарты — в STANDARDS.md.
+Ссылки вида «SS 12 3/1/5/4» — пункты стандартов AAOIFI, цитаты в STANDARDS.md.
 
 ## Правила для исполнителя (читать первым)
 
 - Все команды — через compose-тулбокс, НЕ на хосте:
   `docker compose run --rm node '<команда>'`.
 - Полный прогон = `npm ci && npx hardhat test` в корне; `cd webapp && npm ci
-  && npm run lint && npm run build`. Всё должно быть зелёным до и после
-  каждого раздела.
-- Живой контракт в Base Sepolia (`webapp/src/abi/deployments/84532.json`)
-  имеет СТАРЫЙ ABI. Webapp обязан не падать на старом ABI: новые поля/методы
-  читать с fallback (`p[6] ?? undefined`, `try/catch` вокруг вызовов),
-  как уже сделано для `getApprovers` в `useContractStatus.js`.
-- В `Proposal` добавлять поля ТОЛЬКО в конец структуры — существующие индексы
-  `p[0]..p[5]` в webapp и скриптах должны остаться валидными.
-- Изменение сигнатуры `submitProposal`/`depositFunds`/конструктора запрещено —
-  вместо этого добавлять новые функции или параметры контракта с сеттерами.
-- Коммиты: одно слово, по компонентам (`contract`, `webapp`, `docs`, …),
-  без trailer-ов. Не пушить.
+  && npm run lint && npm run build`; сквозной
+  `docker compose --profile e2e up --abort-on-container-exit e2e`.
+- v3 — новый деплой с новым ABI: менять сигнатуры МОЖНО, но webapp обязан
+  работать с любым из деплоев в `webapp/src/abi/deployments/` через
+  feature-detect по ABI (наличие функции; число inputs у фрагмента), как уже
+  сделано для `hasEconomyV2`.
+- В структуры `Proposal`/`Investor`/`Manager` новые поля добавлять ТОЛЬКО в
+  конец; webapp читает поля по именам.
+- Коммиты: одно слово, по компонентам, без trailer-ов. Пушить только на шаге
+  деплоя демо (§7).
 
-## 1. Жизненный цикл предложения — ✅ выполнено
+## 1. Токенизация долей (ERC-20) — ✅ выполнено
 
-**Цель:** голос с фиксированным весом, дедлайн голосования, отмена. Закрывает
-«живой вес голоса» из аудита и снижает гарар по SS 31 4/2/1 (меньше
-неопределённости в условиях сделки).
+**Цель:** доля Musharaka — передаваемый токен (SS 17 3/6, 5/2/16: торговля
+сертификатами допустима после начала деятельности). Пул пермиссионный:
+получатель обязан быть онборженным инвестором.
 
-Контракт (`contracts/SheikhFi.sol`):
+1. Контракт объявляет минимальный ERC-20 без внешних зависимостей:
+   `name() = "SheikhFi Musharaka Share"`, `symbol() = "SHFI"`,
+   `decimals() = 18`; `balanceOf(a) == investors[a].fundsInvested`;
+   `totalSupply() == totalFunds`; `mapping(address => mapping(address => uint))
+   public allowance;` события `Transfer`, `Approval`.
+2. `transfer(to, amount)`: `require(isInvestor(msg.sender) && isInvestor(to))`;
+   `_accrue` ОБОИМ сторонам ДО перемещения (прибыль кристаллизуется по старым
+   долям); `fundsInvested` двигается, `totalFunds` не меняется;
+   `emit Transfer`.
+3. `approve` / `transferFrom` — стандартно, `allowance` уменьшается.
+4. ERC-20-семантика существующих потоков: `depositFunds` эмитит
+   `Transfer(address(0), инвестор, amount)` (mint); `exit` —
+   `Transfer(инвестор, address(0), amount)` (burn); `writeOffProposal` — burn
+   на каждое списание в цикле.
+5. Тесты: метаданные; `balanceOf`/`totalSupply` синхронны с учётом; transfer
+   двигает долю и кристаллизует прибыль обеих сторон по долям ДО перевода;
+   transfer не-инвестору ревертится; `transferFrom` уважает allowance;
+   mint/burn-события на deposit/exit.
 
-1. В `struct Proposal` добавить В КОНЕЦ: `uint approvalWeight;`,
-   `uint deadline;`, `bool cancelled;`.
-2. Добавить `uint public votingPeriod = 30 days;` и
-   `function setVotingPeriod(uint p) external onlyOwner { require(p >= 1 days && p <= 365 days, "Bad period"); votingPeriod = p; emit VotingPeriodChanged(p); }`.
-3. Добавить `function setApproveShareThreshold(uint t) external onlyOwner { require(t >= 1 && t <= 100, "Bad threshold"); approveShareThreshold = t; emit ThresholdChanged(t); }`.
-4. `submitProposal`: заполнять новые поля
-   `(…, 0, block.timestamp + votingPeriod, false)`.
-5. Добавить `mapping(uint => mapping(address => bool)) public hasVoted;`.
-6. Переписать `approveProposal`:
-   - `require(!proposals[proposalId].cancelled, "Cancelled");`
-   - `require(block.timestamp <= proposals[proposalId].deadline, "Voting closed");`
-   - вместо цикла по `approvers[proposalId]` (удалить цикл целиком):
-     `require(!hasVoted[proposalId][msg.sender], "Already voted");`
-     `hasVoted[proposalId][msg.sender] = true;`
-   - вес фиксируется в момент голоса:
-     `proposals[proposalId].approvalWeight += investors[msg.sender].fundsInvested;`
-   - порог: `if (proposals[proposalId].approvalWeight * 100 / totalFunds >= approveShareThreshold) { … }` — тело ветки без изменений.
-   - `emit ProposalApproved(proposalId, msg.sender, proposals[proposalId].approvalWeight);` оставить (аргумент — накопленный вес).
-7. Добавить
-   `function cancelProposal(uint proposalId) external { Proposal storage p = proposals[proposalId]; require(msg.sender == p.manager || msg.sender == owner, "Not authorized"); require(!p.secured, "Already funded"); require(!p.cancelled, "Cancelled"); p.cancelled = true; emit ProposalCancelled(proposalId); }`.
-8. События: `event ProposalCancelled(uint indexed proposalId);`,
-   `event ThresholdChanged(uint threshold);`, `event VotingPeriodChanged(uint period);`.
+## 2. Деноминация в стейблкоине (опция asset) — ✅ выполнено
 
-Тесты (`test/SheikhFi.test.js`; для времени —
-`const { time } = require("@nomicfoundation/hardhat-network-helpers");`):
+**Цель:** пул может вестись в ERC-20 (USDC на Base) вместо нативного ETH —
+меньше валютного гарара в учёте RWA. Демо остаётся на нативном ETH.
 
-- вес голоса зафиксирован: ali голосует при 10/30, докладывает +50 ETH,
-  bob голосует (20) → `approvalWeight == 30`, предложение НЕ засекьюрено
-  (30*100/80 = 37.5 < 60);
-- `time.increase(30*24*3600 + 1)` → голос ревертится `Voting closed`;
-- отмена менеджером и owner-ом проходит; посторонним — `Not authorized`;
-  голос по отменённому — `Cancelled`; отмена засекьюренного — `Already funded`;
-- сеттеры: не-owner ревертится `Not owner`; границы (`0`, `101`, `> 365 days`)
-  ревертятся; события эмитятся;
-- газ голосования не растёт с числом голосов (замерить 2-й и 10-й голос,
-  разница < 10%).
+1. Конструктор: `constructor(string nickname, uint threshold, address asset)`;
+   `asset == address(0)` — нативный режим (демо), иначе адрес ERC-20.
+2. Внутренние помощники: `_pull(uint amount)` — нативный: `require(msg.value
+   == amount)`; токенный: `require(msg.value == 0)` +
+   `transferFrom(msg.sender, address(this), amount)` с проверкой возврата;
+   `_pay(address to, uint amount)` в `withdraw()` — `call{value:}` или
+   `transfer` с проверкой.
+3. Сигнатуры денежных входов становятся явными по сумме (все `payable`, в
+   нативном режиме сумма дублируется в `msg.value`):
+   `depositFunds(uint amount)`, `receiveRevenue(uint id, uint amount)`,
+   `returnPrincipal(uint id, uint amount)`, `postCollateral(uint amount)` (§5).
+4. `BadReceiver` (тест-хелпер) обновить на новую сигнатуру депозита.
+5. Тесты: `MockERC20` (mint всем участникам) + полный цикл в токенном режиме
+   (deposit → proposal → certify → vote → returnPrincipal → revenue →
+   distribute → withdraw), баланс токена сходится; нативные reverts
+   (`msg.value != amount`, `msg.value != 0` в токенном режиме).
+6. Webapp: адаптер в `state.jsx` — по ABI-фрагменту `depositFunds` определить
+   старую (0 inputs) или новую (1 input) сигнатуру; в токенном режиме перед
+   денежным входом вызывать `asset.approve` (две последовательные транзакции
+   в том же `run()`); режим определять по `contract.asset()` с fallback на
+   нативный.
 
-Webapp:
+## 3. Шариатский совет и документы актива — ✅ выполнено
 
-- `useContractStatus.js`: в объект предложения добавить
-  `approvalWeight: p[6]`, `deadline: p[7]`, `cancelled: p[8]`
-  (все — с `?? undefined` — старый ABI вернёт 6 полей).
-- `state.jsx` `approvalShareFor`: если `p.approvalWeight !== undefined` —
-  `Number(p.approvalWeight * 1000n / totalFunds) / 10`, иначе старый расчёт.
-- `state.jsx`: добавить мутацию `cancelProposal` через `run(…)`.
-- `Proposals.jsx` `ProposalCard`: бейдж `Cancelled` (tone="") при
-  `p.cancelled === true`; бейдж `Expired` (tone="warn") при
-  `!p.secured && p.deadline && Number(p.deadline) * 1000 < Date.now()`;
-  кнопку Approve скрывать для cancelled/expired; кнопку Cancel показывать
-  менеджеру предложения и owner-у, пока `!secured && !cancelled`.
-- `Activity.jsx`: EVENT_META + describe для `ProposalCancelled`,
-  `ThresholdChanged`, `VotingPeriodChanged`.
+**Цель:** предмет сделки перестаёт быть только свободным текстом — снимает
+оговорку ⚠️ по гарару (SS 31 4/1, 4/2/1); совет — обязательный сертификатор
+предложений. Слэшинг (§5) тоже проходит только через вердикт совета
+(SS 13 разд. 6).
 
-Приёмка: полный прогон зелёный; в UI против СТАРОГО деплоя (84532) экраны
-работают, новых бейджей нет, ошибок в консоли нет.
+1. `address public board;` — в конструкторе `board = msg.sender`;
+   `setBoard(address)` onlyOwner, ненулевой адрес, событие `BoardChanged`.
+2. `submitProposal(string description, uint requiredFunds, string docsHash,
+   uint tranches)` — `docsHash` (IPFS CID, опционально пустой; UI поощряет),
+   `tranches` см. §4. Поля в конец `Proposal`: `string docsHash;
+   uint tranches; uint tranchesReleased; bool certified;`.
+3. `certifyProposal(uint id)` — только board; `!cancelled`, `!certified`;
+   событие `ProposalCertified(id)`.
+4. `approveProposal` дополнительно требует `p.certified` («Not certified») —
+   голосование не открывается до сертификации.
+5. Тесты: голос до сертификации ревертится; certify не-board ревертится;
+   после certify цикл идёт как раньше; setBoard — права/границы/событие.
+6. Webapp: роль Board (адрес == `board()`, feature-detect) — desk с очередью
+   несертифицированных предложений и кнопкой Certify; в карточке предложения
+   бейдж «Awaiting certification» и ссылка на `https://ipfs.io/ipfs/<CID>`
+   при непустом docsHash; форма подачи — поля Docs CID и Tranches.
 
-## 2. Передача ownership (двухшаговая) — ✅ выполнено
+## 4. Milestone-транши — ✅ выполнено
 
-**Цель:** потеря ключа owner-а не должна навсегда блокировать распределение
-и онбординг.
+**Цель:** аванс доверенному лицу уменьшается — капитал выдаётся частями по
+мере подтверждения вех. Вехи подтверждает совет (сертификация исполнения —
+его компетенция; партнёры уже одобрили проект целиком при голосовании).
 
-Контракт:
+1. `submitProposal(…, uint tranches)`: `require(tranches >= 1 && tranches <=
+   12)`. При секьюринге: `freeFunds -= fundsRequired` (резервируется всё),
+   но менеджеру зачисляется только транш №1 = `fundsRequired / tranches`;
+   `tranchesReleased = 1`.
+2. `_releasedAmount(p)`: `tranchesReleased == tranches ? fundsRequired :
+   fundsRequired / tranches * tranchesReleased` — остаток от деления уходит
+   последним траншем.
+3. `releaseTranche(uint id)` — только board; `secured && !writtenOff &&
+   tranchesReleased < tranches`; менеджеру зачисляется дельта
+   `_releasedAmount`; событие `TrancheReleased(id, index, amount)`.
+4. `returnPrincipal` капится не `fundsRequired`, а `_releasedAmount(p)` —
+   менеджер не может «вернуть» то, чего не получал.
+5. `distributeRevenue` гейт: `principalReturned == _releasedAmount(p) ||
+   writtenOff` — прибыль по завершённым вехам распределима до конца проекта.
+6. `writeOffProposal`: нераскрытые транши (`fundsRequired − _releasedAmount`)
+   возвращаются в `freeFunds` (снятие резерва), убыток = `_releasedAmount −
+   principalReturned` (только по фактически выданному); допускается нулевой
+   убыток (досрочное закрытие проекта) — тогда цикл списания пропускается,
+   но резерв снимается; «Nothing to write off» — только когда всё выдано и
+   всё возвращено.
+7. Существующее поведение (tranches = 1) обязано совпасть с v2 бит-в-бит —
+   старые тесты не переписываются по числам.
+8. Тесты: транш №1 при секьюринге; release по порядку с остатком в последнем;
+   кап returnPrincipal по выданному; distribute при полностью возвращённых
+   выданных траншах mid-project; write-off частично выданного: freeFunds
+   получает нераскрытое, убыток — только по выданному; release не-board /
+   сверх лимита ревертится.
 
-1. `address public pendingOwner;`
-2. `function transferOwnership(address n) external onlyOwner { require(isInvestor(n), "Not investor"); pendingOwner = n; emit OwnershipTransferStarted(owner, n); }`
-   — новый owner обязан заранее быть онборженным инвестором, иначе учёт
-   owner-доли в `_accrue` пишет в пустую запись.
-3. `function acceptOwnership() external { require(msg.sender == pendingOwner, "Not pending owner"); _accrue(msg.sender); investors[msg.sender].profitRate = 100; address old = owner; owner = msg.sender; ownerNickname = investors[msg.sender].nickname; pendingOwner = address(0); emit OwnershipTransferred(old, msg.sender); }`
-   ВАЖНО: `_accrue(msg.sender)` строго ДО смены `profitRate` и ДО смены
-   `owner` — иначе накопленное до передачи будет пересчитано по новой ставке.
-4. Ставку старого owner-а не трогать (остаётся 100 — «эмерит» ничего не отдаёт
-   новому owner-у; это осознанное решение, зафиксировать комментарием).
-5. События: `event OwnershipTransferStarted(address indexed from, address indexed to);`,
-   `event OwnershipTransferred(address indexed from, address indexed to);`.
+## 5. Залог менеджера и слэшинг по вердикту — ✅ выполнено
 
-Тесты: transfer на не-инвестора ревертится; accept не-pending ревертится;
-после accept: `owner()` сменился, у нового owner-а `profitRate == 100`,
-прибыль, начисленная ДО передачи, зачислена по его старой ставке (проверить
-числом); `onlyOwner`-функции работают у нового и ревертятся у старого.
+**Цель:** обеспечение исполнения БЕЗ переноса коммерческого риска на
+мудариба: залог изымается только вердиктом совета за недобросовестность /
+небрежность / нарушение условий (SS 13 разд. 6; yad amanah — SS 13 8/7).
+Автоматический слэшинг за убыток ЗАПРЕЩЁН.
 
-Webapp: `useRole.js` — определять owner-а по живому `await contract.owner()`
-в `try/catch`, fallback на `deployment.owner` (старый ABI имеет `owner()`,
-так что fallback сработает только при недоступном RPC).
+1. Поля в конец `Manager`: `uint collateral; uint activeProjects;`.
+   `activeProjects` ++ при секьюринге, −− при `principalReturned ==
+   fundsRequired` (полный возврат) и при `writeOffProposal`.
+2. `postCollateral(uint amount) payable` — только менеджер; `_pull`;
+   `CollateralPosted(manager, amount)`.
+3. `withdrawCollateral(uint amount)` — только менеджер;
+   `require(activeProjects == 0)`; зачисляется в `withdrawable` (pull);
+   `CollateralWithdrawn(manager, amount)`.
+4. `slashCollateral(address manager, uint proposalId, uint amount, string
+   reason)` — только board (вердикт = сам вызов, `reason` фиксирует
+   основание); require: менеджер предложения, `secured`, `!writtenOff`,
+   `amount <= collateral`, `amount <= _releasedAmount(p) −
+   principalReturned` (компенсация не выше недостачи). Эффект: залог ↓,
+   `principalReturned` ↑, `freeFunds` ↑ — компенсация капитала;
+   `CollateralSlashed(manager, proposalId, amount, reason)`.
+5. Тесты: пост/вывод залога; вывод при активном проекте ревертится; слэш
+   не-board ревертится; слэш капится залогом и недостачей; слэш уменьшает
+   будущий убыток write-off ровно на сумму компенсации; activeProjects
+   корректен на возврате и списании.
 
-## 3. Activity: кэш сканирования + индикация ошибок RPC — ✅ выполнено
+## 6. Multi-chain UI — ✅ выполнено
 
-**Цель:** убрать полный рескан истории при каждом открытии (сейчас — тысячи
-`eth_getLogs` спустя месяцы после деплоя) и перестать молча глотать ошибки.
+**Цель:** селектор сети поверх `webapp/src/abi/deployments/*.json`.
 
-`webapp/src/hooks/useEvents.js`:
+1. Модуль `webapp/src/deployments.js`: `import.meta.glob('./abi/deployments/
+   *.json', { eager: true })` → карта chainId → деплой; активный выбор — из
+   `localStorage['sheikhfi:chain']`, иначе бандлированный
+   `abi/deployment.json`.
+2. Все импорты `abi/deployment.json` в webapp заменить на
+   `getActiveDeployment()` из этого модуля (state, Sidebar, Desk, Treasury,
+   Overview, Activity).
+3. Селектор сети в сайдбаре (список — пересечение карты деплоев и
+   `networks.js`); смена: записать выбор в localStorage и `location.reload()`
+   (полная пересборка хуков — осознанно простое решение).
+4. Приёмка: билд зелёный; переключение 84532 ↔ 31337 меняет адрес контракта
+   в Treasury; e2e-смок проходит (его деплой пишет 31337 и активную копию).
 
-1. Ключ кэша: `sheikhfi:events:v1:<contractAddress в lowercase>`.
-2. Структура в localStorage (только JSON-безопасные типы, БЕЗ BigInt):
-   `{ lastBlock: number, logs: [{ topics: string[], data: string, blockNumber: number, txHash: string, logIndex: number, timestamp: number }] }`.
-3. Алгоритм: прочитать кэш → сканировать чанками по 800 только
-   `[cache.lastBlock + 1, latest]` (при пустом кэше — от `deployBlock`) →
-   для новых логов получить timestamps → дописать в кэш,
-   `lastBlock = latest` записывать ТОЛЬКО если ни один чанк не упал →
-   декодировать ВСЕ логи (кэш + новые) через `contract.interface.parseLog`
-   на каждом рендере списка (декод дешёвый, кэшировать его не нужно).
-4. Ошибки: счётчик упавших чанков; вернуть из хука
-   `{ events, loading, failedChunks }`. При `failedChunks > 0` НЕ обновлять
-   `lastBlock` (иначе дыра в истории зафиксируется навсегда).
-5. `Activity.jsx`: при `failedChunks > 0` в sub карточки —
-   `"${events.length} events · ${failedChunks} range(s) failed — log may be incomplete"`.
-6. Кэш инвалидировать при несовпадении сохранённого адреса контракта с
-   текущим (ключ уже содержит адрес — достаточно).
+## 7. Деплой v3 в Base Sepolia и обновление демо — ⏳ заблокировано секретами
 
-Тест руками (нет юнит-тестов webapp): открыть Activity против 84532 дважды;
-во второй раз — мгновенная загрузка, в Network-панели нет getLogs по старым
-диапазонам.
+1. Секреты (нет на машине — нужен ввод пользователя): `DEPLOYER_PRIVATE_KEY`
+   (можно свежий: `node -e 'const {ethers}=require("ethers"); const
+   w=ethers.Wallet.createRandom(); console.log(w.address, w.privateKey)'`) и
+   `CDP_API_KEY_ID/SECRET`, `CDP_WALLET_SECRET` для крана; `ETHERSCAN_API_KEY`
+   для верификации. Всё в `.env` (gitignored).
+2. `node scripts/faucet.mjs` — пополнить деплойер (0.0001 ETH хватает при
+   базовой цене газа Base Sepolia; деплой v3 ≈ 4–5M газа).
+3. `npx hardhat run deploy.js --network baseSepolia` — конструктор
+   `("Ali", 60, address(0))`; скрипт пишет `deployments/84532.json` + активную
+   копию; board = деплойер (сменить потом `setBoard`).
+4. `npx hardhat verify --network baseSepolia <адрес> "Ali" 60
+   0x0000000000000000000000000000000000000000` (при наличии ключа).
+5. Обновить в README таблицу «Текущий деплой» (адрес, блок; старый адрес — в
+   строку «архив»); онбординг Bob/Charlie — `node scripts/onboard.mjs`.
+6. Коммит + push в `main`: CI (pages.yml) прогонит тесты и опубликует демо на
+   gh-pages автоматически.
 
-## 4. Экономика v2 — полный цикл капитала — ✅ выполнено
+## 8. Бэкенд-очередь (СЕЙЧАС НЕ ВЫПОЛНЯТЬ)
 
-**Цель:** закрыть разрывы ❌ из STANDARDS.md: fee менеджера от прибыли, а не
-от выручки (SS 13 8/1; SS 12 3/1/3/3); прибыль только после восстановления
-капитала (SS 13 8/7; SS 12 3/1/5/6); распределение убытков (SS 12 3/1/5/4);
-выход партнёра по NAV, не по номиналу (SS 12 3/1/6/2, 3/1/5/9).
-
-Это НОВЫЙ контракт (v2) и новый деплой; обратная совместимость ABI не
-требуется, но webapp должен продолжать работать со старым деплоем 84532
-(feature-detect по наличию методов).
-
-Семантика:
-
-1. **Возврат тела.** В `Proposal` добавить `uint principalReturned;`.
-   Новая функция `returnPrincipal(uint proposalId) external payable`:
-   только менеджер предложения; `principalReturned += msg.value`;
-   `freeFunds += msg.value`; БЕЗ комиссий (SS 13 8/1 — fee только с прибыли);
-   `require(principalReturned <= fundsRequired… )` — излишек сверх тела
-   отправлять через `receiveRevenue`. Событие
-   `PrincipalReturned(proposalId, amount)`.
-2. **Прибыль = выручка, признанная только после возврата тела.**
-   `distributeRevenue`: распределять можно только когда
-   `principalReturned == fundsRequired` ИЛИ предложение закрыто списанием
-   (см. п. 3); `managerFee` считать как прежде, но от выручки, которая теперь
-   по построению является прибылью (тело вернулось отдельным потоком).
-3. **Списание убытка.** `writeOffProposal(uint proposalId)` — только owner,
-   только для secured-предложения; невозвращённое тело
-   `loss = fundsRequired − principalReturned` списывается со ВСЕХ инвесторов
-   **жадно, циклом**: каждому сначала `_accrue` (прибыль кристаллизуется по
-   доле ДО убытка), затем `fundsInvested -= fundsInvested * loss / totalFunds`
-   (по снапшоту totalFunds); `totalFunds` уменьшается на сумму фактических
-   списаний, так что `totalFunds == Σ fundsInvested` выполняется точно.
-   Жадный цикл выбран вместо ленивого аккумулятора `lossPerShare` осознанно:
-   пропорциональность убытка (SS 12 3/1/5/4) получается точной, а двойные
-   ленивые аккумуляторы дают путезависимые ошибки при чередовании прибылей и
-   убытков. Цена — O(инвесторов) на списание: операция редкая, только для
-   owner-а, членство ограничено онбордингом. После списания предложение
-   закрыто: `receiveRevenue` и `returnPrincipal` ревертятся (`Written off`) —
-   списывать можно только когда взыскание финально. Менеджер по умолчанию НЕ
-   отвечает (SS 13 8/7 — yad amanah); его ответственность — оффчейн-процедура
-   (см. §6 «Расширения», слэшинг только за taddi/taqsir по SS 13 разд. 6).
-4. **Выход партнёра.** `exit(uint amount)` — инвестор забирает из
-   `freeFunds` не больше своей текущей доли: `require(amount <= fundsInvested
-   после применения убытков)`; `fundsInvested -= amount; totalFunds -= amount;
-   freeFunds -= amount;` выплата через `withdrawable` (pull). Перед изменением
-   доли — обязательный `_accrue(msg.sender)`. Это выход по факту
-   восстановленного капитала (конструктивная оценка по SS 12 3/1/5/9:
-   свободные средства = уже реализованная стоимость; вложенное в живые
-   проекты выйти не может до возврата/списания).
-5. Инварианты (закрепить тестами):
-   - `address(this).balance >= freeFunds + Σ withdrawable` после каждой операции;
-   - `totalFunds == Σ fundsInvested` (после применения lossPerShare ко всем);
-   - повторный `writeOffProposal` ревертится; `returnPrincipal` после
-     списания ревертится;
-   - выход при пустом `freeFunds` ревертится; выход не трогает чужие доли.
-6. Тесты писать ПЕРВЫМИ (сценарии: полный цикл с возвратом тела и прибылью;
-   проект с частичным возвратом + списание; выход до/после списания;
-   fee менеджера не начисляется на возвращённое тело — сравнить с v1-числами).
-
-Webapp: Operator desk — форма «Return principal» рядом с «Deliver revenue»;
-Treasury — колонка `principalReturned`; Partner desk — форма Exit
-(max = моя доля, доступно при `freeFunds > 0`); все — feature-detect
-(`if (!contract.returnPrincipal) скрыть`).
-
-## 5. Контейнерный E2E — ✅ выполнено
-
-**Цель:** сквозной прогон «deploy → webapp → сценарий» в compose, без ручных
-шагов. Референс уже есть в этом репо: тулбокс-сервис в `docker-compose.yml`.
-
-1. Сервис `chain`: image `node:20.19.0`, команда
-   `npx hardhat node --hostname 0.0.0.0`, healthcheck — JSON-RPC
-   `eth_blockNumber` на `:8545`.
-2. Сервис `deploy`: зависит от healthy `chain`;
-   `npx hardhat run deploy.js --network localhost` с RPC `http://chain:8545`
-   (добавить в `hardhat.config.js` сеть `localhost` с
-   `url: process.env.LOCALHOST_RPC_URL || 'http://127.0.0.1:8545'`).
-3. Сервис `webapp`: `cd webapp && npm ci && npm run build && npm run preview
-   -- --host 0.0.0.0 --port 5173`; healthcheck — fetch `/`.
-4. Сервис `e2e`: playwright-образ
-   (`mcr.microsoft.com/playwright:v1.49.0-jammy`, версия пакета
-   `@playwright/test` совпадает с тегом образа), сценарий: открыть webapp,
-   проверить Overview KPI, Members (посеянные Bob/Charlie), Treasury,
-   Proposals. Без MetaMask: в `useWallet` есть режим read-only —
-   при отсутствии кошелька контракт строится на `JsonRpcProvider`
-   (`VITE_RPC_URL`, иначе RPC из `networks.js`), поэтому смок проверяет
-   реальные данные контракта. Кошельковые сценарии — вне объёма.
-5. Все новые сервисы — под `profiles: ["e2e"]`, чтобы не мешали тулбоксу.
-   Запуск: `docker compose --profile e2e up --abort-on-container-exit e2e`.
-   `vite preview` пускает браузер по имени compose-сервиса только с
-   `preview.allowedHosts: ['webapp']` в `vite.config.js`.
-   Локальный деплой переключает активную конфигурацию на 31337 — после
-   прогона вернуть демо: `node scripts/use-deployment.mjs 84532`.
-
-Приёмка: один вызов команды выше проходит зелёным на чистой машине.
-
-## 6. Расширения (после v2, по одному, каждое — отдельное согласование)
-
-- **Токенизация долей** (ERC-20/ERC-4626 поверх учёта v2) — допустимо по
-  SS 17 3/6 и 5/2/16 (торговля после начала деятельности); `fundsInvested` →
-  баланс токена, `cumulativePerShare`/`lossPerShare` — как в v2.
-- **Стейблкоин вместо ETH** (USDC на Base): все `msg.value` → `transferFrom`,
-  `withdraw` → `transfer`; меньше валютного гарара в учёте RWA.
-- **Milestone-транши**: `fundsRequired` разбивается на транши, каждый
-  открывается отдельным голосованием; уменьшает аванс доверенному лицу.
-- **Слэшинг менеджера — только за нарушение** (SS 13 разд. 6: гарантии
-  изымаются только при «misconduct, negligence or breach of contract»):
-  залог + арбитражная роль (шариатский совет) с ончейн-вердиктом; НЕ
-  автоматический слэшинг за убыток.
-- **Шариатский совет**: роль `board`, обязательная подпись на предложении до
-  начала голосования + IPFS-хэш документов актива в `Proposal` (снижение
-  гарара, SS 31 4/2/1).
-- **Индексер** (Ponder/subgraph) вместо клиентского скана логов + read-only
-  маршрут для регулятора (viem `createPublicClient`, без MetaMask).
-- **Multi-chain UI**: селектор сети поверх `webapp/src/abi/deployments/*.json`
-  (файлы уже пишутся per-chain, см. `scripts/use-deployment.mjs`).
-- **`seed.mjs`**: faucet + onboard одной командой для нового участника демо.
+- **Индексер** (Ponder/subgraph) вместо клиентского скана логов; read-only
+  режим для регулятора уже работает (браузер без кошелька читает контракт
+  через публичный RPC).
+- **seed.mjs** — кран + онбординг одной командой (CDP-кран, нужны секреты).
+- **Слэшинг-арбитраж как процесс**: несколько членов совета, мультиподпись
+  вердикта, тайм-лок на слэш.
