@@ -5,13 +5,24 @@ const {
   DEPLOYER_PRIVATE_KEY,
   BASE_SEPOLIA_RPC_URL,
   AMOY_RPC_URL,
+  ETHERSCAN_API_KEY,
 } = process.env;
 
 const accounts = DEPLOYER_PRIVATE_KEY ? [DEPLOYER_PRIVATE_KEY] : [];
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-  solidity: "0.8.30",
+  solidity: {
+    version: "0.8.30",
+    settings: {
+      optimizer: { enabled: true, runs: 200 },
+    },
+  },
+  // hardhat-verify ships with @nomicfoundation/hardhat-toolbox;
+  // an Etherscan V2 key covers Base Sepolia as well.
+  etherscan: {
+    apiKey: ETHERSCAN_API_KEY || '',
+  },
   networks: {
     baseSepolia: {
       url: BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org',
