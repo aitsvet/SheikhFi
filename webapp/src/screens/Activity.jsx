@@ -76,8 +76,14 @@ function describe(ev, getNickname) {
 }
 
 export default function ActivityScreen() {
-  const { events, eventsLoading, getNickname } = useStore();
+  const { events, eventsLoading, eventsFailedChunks, getNickname } = useStore();
   const net = networkFor(deploymentJson);
+  const sub = eventsLoading
+    ? 'Loading…'
+    : `${events.length} event${events.length === 1 ? '' : 's'}`
+      + (eventsFailedChunks > 0
+          ? ` · ${eventsFailedChunks} range(s) failed — log may be incomplete`
+          : '');
 
   return (
     <>
@@ -91,7 +97,7 @@ export default function ActivityScreen() {
       <Card>
         <CardHead
           title="Event log"
-          sub={eventsLoading ? 'Loading…' : `${events.length} event${events.length === 1 ? '' : 's'}`}
+          sub={sub}
         />
         {events.length === 0 && !eventsLoading
           ? <div className="card-body"><Empty>No events yet.</Empty></div>

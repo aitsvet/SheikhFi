@@ -46,7 +46,7 @@ export function StoreProvider({ children }) {
   const [busy, setBusy]     = useState(false);
   const [tx, setTx]         = useState({ msg: '', tone: '' });
   const [eventsKey, setEventsKey] = useState(0);
-  const { events, loading: eventsLoading } = useEvents(
+  const { events, loading: eventsLoading, failedChunks: eventsFailedChunks } = useEvents(
     contract, deployment.deployBlock, eventsKey
   );
 
@@ -158,7 +158,7 @@ export function StoreProvider({ children }) {
     withdraw, settle,
     getNickname, approvalShareFor,
     busy, loading, tx, setTx, refresh,
-    events, eventsLoading,
+    events, eventsLoading, eventsFailedChunks,
   };
 
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>;
