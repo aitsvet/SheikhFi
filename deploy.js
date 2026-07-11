@@ -14,7 +14,8 @@ async function main() {
   console.log(`Balance: ${ethers.formatEther(balance)} ETH`);
 
   const SheikhFi = await ethers.getContractFactory("SheikhFi");
-  const contract = await SheikhFi.deploy(ownerNickname, 60);
+  // native-ETH denomination; pass a token address here for a stablecoin pool
+  const contract = await SheikhFi.deploy(ownerNickname, 60, ethers.ZeroAddress);
   await contract.waitForDeployment();
   const contractAddress = await contract.getAddress();
   const deployTx = contract.deploymentTransaction();

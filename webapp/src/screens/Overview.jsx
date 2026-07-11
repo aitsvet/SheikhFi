@@ -1,7 +1,8 @@
 import { Badge, Button, Card, CardHead, Empty, Kpi, Progress, formatEther } from '../ui';
 import { SCREENS, useStore } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
-import deploymentJson from '../abi/deployment.json';
+import { getActiveDeployment } from '../deployments';
+const deploymentJson = getActiveDeployment();
 import { networkFor } from '../networks';
 
 function OverviewKpis() {

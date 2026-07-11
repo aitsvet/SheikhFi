@@ -7,7 +7,8 @@ import {
 import { ROLES, isOpenProposal, useStore } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
 import { ProposalCard } from './Proposals';
-import deploymentJson from '../abi/deployment.json';
+import { getActiveDeployment } from '../deployments';
+const deploymentJson = getActiveDeployment();
 import { networkFor } from '../networks';
 
 function CouncilDesk() {
@@ -100,13 +101,18 @@ function CouncilDesk() {
 
 function OperatorDesk() {
   const { identity, proposals, managers, submitProposal, receiveRevenue,
-          returnPrincipal, hasEconomyV2, tx, busy } = useStore();
+          returnPrincipal, postCollateral, withdrawCollateral,
+          hasEconomyV2, hasV3, tx, busy } = useStore();
   const [desc, setDesc] = useState('');
   const [funds, setFunds] = useState('');
+  const [docsCid, setDocsCid] = useState('');
+  const [tranches, setTranches] = useState('1');
   const [payment, setPayment] = useState('');
   const [selectedProposal, setSelectedProposal] = useState('');
   const [principal, setPrincipal] = useState('');
   const [principalProposal, setPrincipalProposal] = useState('');
+  const [collateralIn, setCollateralIn] = useState('');
+  const [collateralOut, setCollateralOut] = useState('');
 
   const mine = proposals
     .map((p, i) => ({ ...p, _id: i }))
@@ -118,12 +124,23 @@ function OperatorDesk() {
 
   const totalRequired = mine.reduce((s, p) => s + p.requiredFunds, 0n);
   const totalReceived = mine.reduce((s, p) => s + (p.revenueReceived ?? 0n), 0n);
-  const myRate = managers.find(m =>
-    m.addr.toLowerCase() === identity.addr.toLowerCase())?.profitRate ?? 0n;
+  const me = managers.find(m =>
+    m.addr.toLowerCase() === identity.addr.toLowerCase());
+  const myRate = me?.profitRate ?? 0n;
+  const myCollateral = me?.collateral ?? 0n;
+  const myActive = Number(me?.activeProjects ?? 0n);
 
   const doSubmit = async () => {
-    await submitProposal(desc, parseEther(funds));
-    setDesc(''); setFunds('');
+    await submitProposal(desc, parseEther(funds), docsCid, tranches);
+    setDesc(''); setFunds(''); setDocsCid(''); setTranches('1');
+  };
+  const doPostCollateral = async () => {
+    await postCollateral(parseEther(collateralIn));
+    setCollateralIn('');
+  };
+  const doWithdrawCollateral = async () => {
+    await withdrawCollateral(parseEther(collateralOut));
+    setCollateralOut('');
   };
   const doReceive = async () => {
     await receiveRevenue(Number(selectedProposal), parseEther(payment));
@@ -158,15 +175,33 @@ function OperatorDesk() {
                 placeholder="e.g. Solar microgrid — Tashkent suburb"
                 value={desc} onChange={e => setDesc(e.target.value)} disabled={busy} />
             </Field>
+            {hasV3 && (
+              <Field label="Asset documents (IPFS CID, optional)">
+                <Input style={{ width: '100%' }} type="text" placeholder="bafy…"
+                  value={docsCid} onChange={e => setDocsCid(e.target.value)} disabled={busy} />
+              </Field>
+            )}
             <div className="field-row">
               <Field label="Funds required (ETH)">
                 <Input type="number" placeholder="0.0"
                   value={funds} onChange={e => setFunds(e.target.value)} disabled={busy} />
               </Field>
+              {hasV3 && (
+                <Field label="Tranches">
+                  <Input style={{ width: 90 }} type="number" min="1" max="12"
+                    value={tranches} onChange={e => setTranches(e.target.value)} disabled={busy} />
+                </Field>
+              )}
               <Button variant="primary" onClick={doSubmit} disabled={busy || !desc || !funds}>
                 Submit proposal
               </Button>
             </div>
+            {hasV3 && (
+              <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+                The sharia board certifies the proposal before partners can vote;
+                with several tranches the board releases capital milestone by milestone.
+              </div>
+            )}
           </div>
         </Card>
 
@@ -198,6 +233,38 @@ function OperatorDesk() {
           </div>
         </Card>
       </div>
+
+      {hasV3 && (
+        <Card style={{ marginTop: 16 }}>
+          <CardHead title="Collateral"
+            sub={`Posted: ${formatEther(myCollateral)} ETH · enforceable only by a board verdict`} />
+          <div className="card-body stack">
+            <div className="field-row">
+              <Field label="Post (ETH)">
+                <Input type="number" placeholder="0.0"
+                  value={collateralIn} onChange={e => setCollateralIn(e.target.value)} disabled={busy} />
+              </Field>
+              <Button onClick={doPostCollateral} disabled={busy || !collateralIn}>
+                Post collateral
+              </Button>
+              <Field label="Withdraw (ETH)">
+                <Input type="number" placeholder="0.0"
+                  value={collateralOut} onChange={e => setCollateralOut(e.target.value)}
+                  disabled={busy || myActive > 0} />
+              </Field>
+              <Button onClick={doWithdrawCollateral}
+                disabled={busy || !collateralOut || myActive > 0}>
+                Withdraw
+              </Button>
+            </div>
+            {myActive > 0 && (
+              <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+                Locked while {myActive} project{myActive === 1 ? ' is' : 's are'} active.
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
 
       {hasEconomyV2 && (
         <Card style={{ marginTop: 16 }}>

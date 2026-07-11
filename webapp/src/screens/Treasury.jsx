@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { Badge, Card, CardHead, Empty, Field, Kpi, Select, TxStatus, formatEther } from '../ui';
+import { Badge, Card, CardHead, Empty, Field, Input, Kpi, Select, TxStatus,
+         formatEther, parseEther } from '../ui';
 import { Button } from '../ui';
 import { ROLES, useStore } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
-import deploymentJson from '../abi/deployment.json';
+import { getActiveDeployment } from '../deployments';
+const deploymentJson = getActiveDeployment();
 import { networkFor } from '../networks';
 
 function DistributePanel() {
@@ -78,8 +80,64 @@ function DistributePanel() {
   );
 }
 
+function SlashPanel() {
+  const { proposals, managers, slashCollateral, getNickname, tx, busy } = useStore();
+  const [sel, setSel] = useState('');
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  // slashable: secured, not written off, capital outstanding, manager has collateral
+  const slashable = proposals
+    .map((p, i) => ({ ...p, _id: i }))
+    .filter(p => p.secured && p.writtenOff !== true
+      && (p.principalReturned ?? 0n) < p.requiredFunds
+      && (managers.find(m => m.addr.toLowerCase() === p.manager.toLowerCase())?.collateral ?? 0n) > 0n);
+
+  const doSlash = async () => {
+    const p = slashable.find(x => String(x._id) === String(sel));
+    if (!p) return;
+    await slashCollateral(p.manager, p._id, parseEther(amount), reason);
+    setSel(''); setAmount(''); setReason('');
+  };
+
+  return (
+    <Card>
+      <CardHead title="Board verdict — slash collateral"
+        sub="Only for misconduct, negligence or breach — never for a commercial loss" />
+      <div className="card-body stack">
+        <Field label="Proposal">
+          <Select value={sel} onChange={e => setSel(e.target.value)}
+            disabled={!slashable.length || busy} style={{ width: '100%' }}>
+            <option value="" disabled>
+              {slashable.length ? 'Select project with collateralised manager' : 'Nothing slashable'}
+            </option>
+            {slashable.map(p => (
+              <option key={p._id} value={p._id}>
+                #{p._id} — {p.description} · {getNickname(p.manager)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <div className="field-row">
+          <Field label="Amount (ETH)">
+            <Input type="number" placeholder="0.0"
+              value={amount} onChange={e => setAmount(e.target.value)} disabled={busy} />
+          </Field>
+          <Field label="Grounds (recorded on-chain)" style={{ flex: 1 }}>
+            <Input style={{ width: '100%' }} type="text" placeholder="e.g. breach of reporting duty"
+              value={reason} onChange={e => setReason(e.target.value)} disabled={busy} />
+          </Field>
+          <Button onClick={doSlash} disabled={busy || sel === '' || !amount || !reason}>
+            Slash
+          </Button>
+        </div>
+        <TxStatus msg={tx.msg} tone={tx.tone} />
+      </div>
+    </Card>
+  );
+}
+
 export default function TreasuryScreen() {
-  const { totalFunds, freeFunds, totalRevenue, proposals, identity,
+  const { totalFunds, freeFunds, totalRevenue, proposals, identity, isBoard, hasV3,
           approveShareThreshold, getNickname, deployment } = useStore();
   const net = networkFor(deploymentJson);
   const securedValue = proposals
@@ -166,6 +224,12 @@ export default function TreasuryScreen() {
           </div>
         </Card>
       </div>
+
+      {hasV3 && isBoard && (
+        <div style={{ marginTop: 16 }}>
+          <SlashPanel />
+        </div>
+      )}
 
       {identity.role === ROLES.OWNER && (
         <div style={{ marginTop: 16 }}>

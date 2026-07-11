@@ -56,6 +56,11 @@ export function useContractStatus(contract, address) {
               cancelled: p.cancelled,
               principalReturned: p.principalReturned,
               writtenOff: p.writtenOff,
+              // v3 fields
+              docsHash: p.docsHash,
+              tranches: p.tranches,
+              tranchesReleased: p.tranchesReleased,
+              certified: p.certified,
               approvers,
             };
           })

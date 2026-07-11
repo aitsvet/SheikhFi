@@ -1,7 +1,8 @@
 import { Badge, Card, CardHead, Empty, formatEtherExact, shortAddr } from '../ui';
 import { useStore } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
-import deploymentJson from '../abi/deployment.json';
+import { getActiveDeployment } from '../deployments';
+const deploymentJson = getActiveDeployment();
 import { networkFor } from '../networks';
 
 const EVENT_META = {
@@ -9,7 +10,13 @@ const EVENT_META = {
   ManagerAdded:       { tone: 'blue', label: 'Operator onboarded' },
   FundsDeposited:     { tone: 'pink', label: 'Deposit' },
   ProposalSubmitted:  { tone: 'warn', label: 'Proposal submitted' },
+  ProposalCertified:  { tone: 'ok',   label: 'Board certified' },
   ProposalApproved:   { tone: 'blue', label: 'Vote cast' },
+  TrancheReleased:    { tone: 'blue', label: 'Tranche released' },
+  BoardChanged:       { tone: 'warn', label: 'Board changed' },
+  CollateralPosted:   { tone: 'blue', label: 'Collateral posted' },
+  CollateralWithdrawn:{ tone: '',     label: 'Collateral withdrawn' },
+  CollateralSlashed:  { tone: 'warn', label: 'Collateral slashed' },
   ProposalFunded:     { tone: 'ok',   label: 'Proposal secured' },
   ProposalCancelled:  { tone: '',     label: 'Proposal cancelled' },
   ThresholdChanged:   { tone: 'warn', label: 'Threshold changed' },
@@ -57,6 +64,26 @@ function describe(ev, getNickname) {
       </>);
     case 'ProposalCancelled':
       return (<>Proposal <strong>#{a[0].toString()}</strong> cancelled</>);
+    case 'ProposalCertified':
+      return (<>Board certified proposal <strong>#{a[0].toString()}</strong></>);
+    case 'TrancheReleased':
+      return (<>
+        Tranche <strong>#{a[1].toString()}</strong> of proposal <strong>#{a[0].toString()}</strong> released · <span className="num">{formatEtherExact(a[2])} ETH</span>
+      </>);
+    case 'BoardChanged':
+      return (<>Sharia board handed to <strong>{getNickname(a[0]) || shortAddr(a[0])}</strong></>);
+    case 'CollateralPosted':
+      return (<>
+        <strong>{getNickname(a[0]) || shortAddr(a[0])}</strong> posted <span className="num">{formatEtherExact(a[1])} ETH</span> collateral
+      </>);
+    case 'CollateralWithdrawn':
+      return (<>
+        <strong>{getNickname(a[0]) || shortAddr(a[0])}</strong> withdrew <span className="num">{formatEtherExact(a[1])} ETH</span> collateral
+      </>);
+    case 'CollateralSlashed':
+      return (<>
+        <strong>{getNickname(a[0]) || shortAddr(a[0])}</strong> slashed <span className="num">{formatEtherExact(a[2])} ETH</span> on proposal <strong>#{a[1].toString()}</strong> · "{a[3]}"
+      </>);
     case 'ThresholdChanged':
       return (<>Approval threshold set to <span className="num">{a[0].toString()}%</span></>);
     case 'VotingPeriodChanged':

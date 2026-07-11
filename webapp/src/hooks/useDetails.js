@@ -26,7 +26,12 @@ export function useDetails(contract, status, deployment) {
         const details = await Promise.all(
           status.managerAddresses.map(async (addr) => {
             const mgr = await contract.managers(addr);
-            return { addr, nickname: mgr.nickname, fundsSecured: mgr.fundsSecured, profit: mgr.profit, profitRate: mgr.profitRate };
+            return {
+              addr, nickname: mgr.nickname, fundsSecured: mgr.fundsSecured,
+              profit: mgr.profit, profitRate: mgr.profitRate,
+              // v3 fields — undefined on the older deployed ABIs
+              collateral: mgr.collateral, activeProjects: mgr.activeProjects,
+            };
           })
         );
         setManagerDetails(details);

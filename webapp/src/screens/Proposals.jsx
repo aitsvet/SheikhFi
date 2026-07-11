@@ -5,20 +5,25 @@ import { PageHead, WithdrawPill } from './PageHead';
 
 export function ProposalCard({ p, id }) {
   const { getNickname, approvalShareFor, approveShareThreshold,
-          identity, approveProposal, cancelProposal, busy } = useStore();
+          identity, approveProposal, cancelProposal,
+          certifyProposal, releaseTranche, isBoard, busy } = useStore();
   const share = approvalShareFor(p);
   const voted = identity.addr
     && (p.approvers || []).some(a => a.toLowerCase() === identity.addr.toLowerCase());
   const canVote = identity.role === ROLES.OWNER || identity.role === ROLES.INVESTOR;
   const settled = p.secured && p.revenuePaid >= p.revenueReceived && p.revenueReceived > 0n;
-  // v2 lifecycle fields — undefined on the older deployed ABI
+  // v2/v3 lifecycle fields — undefined on the older deployed ABIs
   const cancelled = p.cancelled === true;
+  const uncertified = p.certified === false && !cancelled && !p.secured;
   const expired = !p.secured && !cancelled && p.deadline !== undefined
     && Number(p.deadline) * 1000 < Date.now();
-  const open = !p.secured && !cancelled && !expired;
+  const open = !p.secured && !cancelled && !expired && !uncertified;
   const canCancel = !p.secured && !cancelled
     && (identity.role === ROLES.OWNER
         || p.manager.toLowerCase() === identity.addr.toLowerCase());
+  const tranched = p.tranches !== undefined && Number(p.tranches) > 1;
+  const canRelease = isBoard && p.secured && p.writtenOff !== true
+    && tranched && Number(p.tranchesReleased) < Number(p.tranches);
 
   return (
     <div className="proposal">
@@ -31,9 +36,20 @@ export function ProposalCard({ p, id }) {
            : p.writtenOff === true ? <Badge>Written off</Badge>
            : settled              ? <Badge tone="ok">Settled</Badge>
            : p.secured            ? <Badge tone="ok">Secured</Badge>
+           : uncertified          ? <Badge>Awaiting certification</Badge>
            : expired              ? <Badge tone="warn">Expired</Badge>
                                   : <Badge tone="warn">Pending</Badge>}
           {voted && !p.secured && <Badge tone="blue">You voted</Badge>}
+          {tranched && (
+            <span>tranche <strong className="num">
+              {Number(p.tranchesReleased)}/{Number(p.tranches)}
+            </strong></span>
+          )}
+          {p.docsHash ? (
+            <a className="mono" style={{ fontSize: 11 }}
+               href={`https://ipfs.io/ipfs/${p.docsHash}`}
+               target="_blank" rel="noopener noreferrer">docs</a>
+          ) : null}
         </div>
         <div className="progress-row">
           <Progress value={share} threshold={approveShareThreshold} />
@@ -66,6 +82,20 @@ export function ProposalCard({ p, id }) {
             disabled={busy}
             onClick={() => cancelProposal(id)}>
             Cancel
+          </Button>
+        )}
+        {isBoard && uncertified && (
+          <Button variant="primary" size="sm"
+            disabled={busy}
+            onClick={() => certifyProposal(id)}>
+            Certify
+          </Button>
+        )}
+        {canRelease && (
+          <Button size="sm"
+            disabled={busy}
+            onClick={() => releaseTranche(id)}>
+            Release tranche
           </Button>
         )}
       </div>

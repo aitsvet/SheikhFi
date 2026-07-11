@@ -1,11 +1,13 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { ethers } from 'ethers';
 import { useWallet } from './hooks/useWallet';
 import { useContractStatus } from './hooks/useContractStatus';
 import { useRole, ROLES } from './hooks/useRole';
 import { useDetails } from './hooks/useDetails';
 import { useEvents } from './hooks/useEvents';
-import deployment from './abi/deployment.json';
+import { getActiveDeployment } from './deployments';
+const deployment = getActiveDeployment();
 import { shortAddr } from './ui';
 
 export { ROLES };
@@ -26,12 +28,19 @@ const ROLE_LABEL = {
   [ROLES.NONE]:     'Guest',
 };
 
-// A proposal that can still be voted on. The v2 lifecycle fields are
-// undefined on the older deployed ABI — such proposals count as open.
+// A proposal that can still be voted on. The v2/v3 lifecycle fields are
+// undefined on the older deployed ABIs — such proposals count as open.
 export function isOpenProposal(p) {
   if (p.secured || p.cancelled === true) return false;
+  if (p.certified === false) return false; // v3: voting opens after board sign-off
   if (p.deadline !== undefined && Number(p.deadline) * 1000 < Date.now()) return false;
   return true;
+}
+
+// ABI generation of a function: undefined if absent, else its inputs count.
+function fnInputs(abi, name) {
+  const frag = abi.find(e => e.type === 'function' && e.name === name);
+  return frag ? frag.inputs.length : undefined;
 }
 
 const StoreCtx = createContext(null);
@@ -82,6 +91,36 @@ export function StoreProvider({ children }) {
     return Number((approveShare * 1000n) / totalFunds) / 10;
   }, [investors, totalFunds]);
 
+  // v3 signature detection: money-in functions carry an explicit amount arg
+  const v3Money = fnInputs(deployment.abi, 'depositFunds') === 1;
+  const v3Submit = fnInputs(deployment.abi, 'submitProposal') === 4;
+
+  // pool denomination (v3): address(0)/absent = native; else an ERC-20
+  const [assetAddr, setAssetAddr] = useState('');
+  const [boardAddr, setBoardAddr] = useState('');
+  useEffect(() => {
+    if (!contract) { setAssetAddr(''); setBoardAddr(''); return; }
+    (async () => {
+      try { setAssetAddr(await contract.asset()); } catch { setAssetAddr(''); }
+      try { setBoardAddr(await contract.board()); } catch { setBoardAddr(''); }
+    })();
+  }, [contract]);
+  const tokenMode = !!assetAddr && assetAddr !== ethers.ZeroAddress;
+  const isBoard = !!address && !!boardAddr
+    && address.toLowerCase() === boardAddr.toLowerCase();
+
+  // money-in helper: native attaches value; token mode approves first
+  const payIn = useCallback(async (amountWei, call) => {
+    if (!v3Money) return call({ value: amountWei }); // old ABI: payable only
+    if (tokenMode) {
+      const erc20 = new ethers.Contract(assetAddr,
+        ['function approve(address,uint256) returns (bool)'], contract.runner);
+      await (await erc20.approve(await contract.getAddress(), amountWei)).wait();
+      return call(amountWei, {});
+    }
+    return call(amountWei, { value: amountWei });
+  }, [v3Money, tokenMode, assetAddr, contract]);
+
   const run = useCallback(async (label, fn) => {
     if (!contract) {
       setTx({ msg: 'Connect a wallet first.', tone: 'err' });
@@ -111,11 +150,33 @@ export function StoreProvider({ children }) {
     [contract, run]
   );
   const depositFunds = useCallback((amountWei) =>
-    run('Deposit', () => contract.depositFunds({ value: amountWei })),
+    run('Deposit', () => payIn(amountWei, (...a) => contract.depositFunds(...a))),
+    [contract, run, payIn]
+  );
+  const submitProposal = useCallback((description, requiredFundsWei, docsHash = '', tranches = 1) =>
+    run('Submit proposal', () => v3Submit
+      ? contract.submitProposal(description, requiredFundsWei, docsHash, Number(tranches) || 1)
+      : contract.submitProposal(description, requiredFundsWei)),
+    [contract, run, v3Submit]
+  );
+  const certifyProposal = useCallback((proposalId) =>
+    run('Certify proposal', () => contract.certifyProposal(Number(proposalId))),
     [contract, run]
   );
-  const submitProposal = useCallback((description, requiredFundsWei) =>
-    run('Submit proposal', () => contract.submitProposal(description, requiredFundsWei)),
+  const releaseTranche = useCallback((proposalId) =>
+    run('Release tranche', () => contract.releaseTranche(Number(proposalId))),
+    [contract, run]
+  );
+  const postCollateral = useCallback((amountWei) =>
+    run('Post collateral', () => payIn(amountWei, (...a) => contract.postCollateral(...a))),
+    [contract, run, payIn]
+  );
+  const withdrawCollateral = useCallback((amountWei) =>
+    run('Withdraw collateral', () => contract.withdrawCollateral(amountWei)),
+    [contract, run]
+  );
+  const slashCollateral = useCallback((manager, proposalId, amountWei, reason) =>
+    run('Slash collateral', () => contract.slashCollateral(manager, Number(proposalId), amountWei, reason)),
     [contract, run]
   );
   const approveProposal = useCallback((proposalId) =>
@@ -127,8 +188,9 @@ export function StoreProvider({ children }) {
     [contract, run]
   );
   const returnPrincipal = useCallback((proposalId, amountWei) =>
-    run('Return principal', () => contract.returnPrincipal(Number(proposalId), { value: amountWei })),
-    [contract, run]
+    run('Return principal', () => payIn(amountWei,
+      (...a) => contract.returnPrincipal(Number(proposalId), ...a))),
+    [contract, run, payIn]
   );
   const writeOffProposal = useCallback((proposalId) =>
     run('Write off', () => contract.writeOffProposal(Number(proposalId))),
@@ -142,8 +204,9 @@ export function StoreProvider({ children }) {
     // ABI on Polygon Amoy carries the original typo `recieveRevenue`; new
     // deployments use the fixed name. Use whichever the bound contract has.
     const fn = contract?.receiveRevenue ?? contract?.recieveRevenue;
-    return run('Deliver revenue', () => fn(Number(proposalId), { value: amountWei }));
-  }, [contract, run]);
+    return run('Deliver revenue', () => payIn(amountWei,
+      (...a) => fn(Number(proposalId), ...a)));
+  }, [contract, run, payIn]);
   const distributeRevenue = useCallback((proposalId) =>
     run('Distribute revenue', () => contract.distributeRevenue(Number(proposalId))),
     [contract, run]
@@ -168,9 +231,14 @@ export function StoreProvider({ children }) {
     addInvestor, addManager, depositFunds, submitProposal,
     approveProposal, cancelProposal, receiveRevenue, distributeRevenue,
     returnPrincipal, writeOffProposal, exitFunds,
+    certifyProposal, releaseTranche,
+    postCollateral, withdrawCollateral, slashCollateral,
     withdraw, settle,
     // v2 economy functions exist on this deployment's ABI
     hasEconomyV2: deployment.abi.some(e => e.name === 'returnPrincipal'),
+    // v3: board certification, tranches, collateral, tokenized shares
+    hasV3: deployment.abi.some(e => e.name === 'certifyProposal'),
+    isBoard, boardAddr, tokenMode,
     getNickname, approvalShareFor,
     busy, loading, tx, setTx, refresh,
     events, eventsLoading, eventsFailedChunks,

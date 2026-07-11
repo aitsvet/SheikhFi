@@ -1,6 +1,7 @@
 import { Avatar, Button, shortAddr } from '../ui';
 import { ROLES, SCREENS, useStore } from '../state';
-import deployment from '../abi/deployment.json';
+import { DEPLOYMENTS, getActiveDeployment, setActiveChain } from '../deployments';
+const deployment = getActiveDeployment();
 import { networkFor } from '../networks';
 
 function NavItem({ active, label, count, onClick }) {
@@ -31,6 +32,20 @@ export default function Sidebar() {
         <span className="ar-mark">شيخ فاي</span>
         <span className="latin">SheikhFi</span>
         <span className="sub">{net.sub}</span>
+        {Object.keys(DEPLOYMENTS).length > 1 && (
+          <select
+            className="select"
+            style={{ marginTop: 8, fontSize: 12, width: '100%' }}
+            value={String(deployment.chainId)}
+            onChange={e => setActiveChain(e.target.value)}
+          >
+            {Object.values(DEPLOYMENTS).map(d => (
+              <option key={d.chainId} value={String(d.chainId)}>
+                {networkFor(d).name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       <div className="nav-section">
