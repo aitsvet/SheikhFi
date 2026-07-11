@@ -42,6 +42,8 @@ contract SheikhFi {
         uint approvalWeight;           // sum of approvers' stakes, frozen at vote time
         uint deadline;                 // voting closes at this timestamp
         bool cancelled;
+        uint principalReturned;        // capital repaid by the manager, fee-free
+        bool writtenOff;               // unrecovered capital written down pro-rata
     }
     Proposal[] public proposals;
     address[][] public approvers;      // list of investors who approved the proposal
@@ -63,7 +65,10 @@ contract SheikhFi {
     event OwnershipTransferStarted(address indexed from, address indexed to);
     event OwnershipTransferred(address indexed from, address indexed to);
     event RevenueReceived(uint indexed proposalId, address indexed manager, uint amount);
+    event PrincipalReturned(uint indexed proposalId, address indexed manager, uint amount);
+    event ProposalWrittenOff(uint indexed proposalId, uint loss);
     event RevenueDistributed(uint indexed proposalId, uint revenue);
+    event Exited(address indexed investor, uint amount);
     event Withdrawn(address indexed account, uint amount);
 
     function isInvestor(address addr) public view returns (bool) {
@@ -156,7 +161,7 @@ contract SheikhFi {
         uint proposalId = proposals.length;
         proposals.push(Proposal(
             msg.sender, description, requiredFunds, false, 0, 0,
-            0, block.timestamp + votingPeriod, false
+            0, block.timestamp + votingPeriod, false, 0, false
         ));
         approvers.push();
         emit ProposalSubmitted(proposalId, msg.sender, description, requiredFunds);
@@ -233,25 +238,73 @@ contract SheikhFi {
         emit OwnershipTransferred(old, msg.sender);
     }
 
+    // manager repays the deployed capital; goes straight back to the free
+    // pool, no fee is taken (AAOIFI SS 13 8/1: the manager's share comes out
+    // of profit only, never out of returned capital)
+    function returnPrincipal(uint proposalId) external payable {
+        require(msg.value > 0, "No value");
+        Proposal storage p = proposals[proposalId];
+        require(msg.sender == p.manager, "Not proposal manager");
+        require(p.secured, "Not secured");
+        require(!p.writtenOff, "Written off");
+        require(p.principalReturned + msg.value <= p.fundsRequired, "Exceeds principal");
+        p.principalReturned += msg.value;
+        freeFunds += msg.value;
+        emit PrincipalReturned(proposalId, msg.sender, msg.value);
+    }
+
     // manager receives revenue from the investment in real-world asset
     function receiveRevenue(uint proposalId) external payable {
         require(msg.value > 0, "No value");
         require(msg.sender == proposals[proposalId].manager, "Not proposal manager");
         require(proposals[proposalId].secured, "Not secured");
+        require(!proposals[proposalId].writtenOff, "Written off");
         proposals[proposalId].revenueReceived += msg.value;
         emit RevenueReceived(proposalId, msg.sender, msg.value);
     }
 
+    // owner writes off the unrecovered capital of a failed project: every
+    // investor's stake shrinks in proportion to their share (AAOIFI SS 12
+    // 3/1/5/4 — losses strictly pro-rata to capital contributions).
+    // Profit accrued so far is crystallised first, at the pre-loss stakes.
+    // O(investors) by design: exactness of the loss allocation over lazy
+    // accumulators; membership is owner-gated, so the set stays bounded.
+    // Write off only when recovery is final — the proposal closes for good.
+    function writeOffProposal(uint proposalId) external onlyOwner {
+        Proposal storage p = proposals[proposalId];
+        require(p.secured, "Not secured");
+        require(!p.writtenOff, "Written off");
+        uint loss = p.fundsRequired - p.principalReturned;
+        require(loss > 0, "Nothing to write off");
+        uint tf = totalFunds; // snapshot: reductions below must not skew shares
+        uint reduced = 0;
+        for (uint i = 0; i < investorAddresses.length; i++) {
+            address inv = investorAddresses[i];
+            _accrue(inv);
+            uint cut = investors[inv].fundsInvested * loss / tf;
+            investors[inv].fundsInvested -= cut;
+            reduced += cut;
+        }
+        // truncation dust stays as stake, keeping totalFunds == Σ fundsInvested
+        totalFunds -= reduced;
+        p.writtenOff = true;
+        emit ProposalWrittenOff(proposalId, loss);
+    }
+
     // owner distributes the revenue to the investors and the manager
     function distributeRevenue(uint proposalId) external onlyOwner {
-        uint revenue = proposals[proposalId].revenueReceived - proposals[proposalId].revenuePaid;
+        Proposal storage p = proposals[proposalId];
+        uint revenue = p.revenueReceived - p.revenuePaid;
         require(revenue > 0, "No revenue");
-        // totalFunds > 0 is invariant here: revenue implies a secured proposal,
-        // securing implies a vote, and approveProposal requires totalFunds > 0
-        // (totalFunds never decreases).
-        proposals[proposalId].revenuePaid = proposals[proposalId].revenueReceived;
+        // profit is recognised only once the capital is home (AAOIFI SS 13
+        // 8/7) — or the shortfall has been written down as a loss
+        require(p.principalReturned == p.fundsRequired || p.writtenOff, "Principal outstanding");
+        // reachable: every investor may have exited fully by the time the
+        // revenue arrives, leaving nobody to distribute to
+        require(totalFunds > 0, "No investors");
+        p.revenuePaid = p.revenueReceived;
 
-        address manager = proposals[proposalId].manager;
+        address manager = p.manager;
         uint managerFee = revenue * managers[manager].profitRate / 100;
         uint investorRevenue = revenue - managerFee;
 
@@ -263,6 +316,24 @@ contract SheikhFi {
         }
 
         emit RevenueDistributed(proposalId, revenue);
+    }
+
+    // investor takes part of their stake back out of the free pool — an exit
+    // at constructive valuation (AAOIFI SS 12 3/1/6/2, 3/1/5/9): freeFunds is
+    // realised cash and the stake is already net of written-off losses;
+    // capital deployed into live projects cannot leave until returned or
+    // written off
+    function exit(uint amount) external onlyInvestor {
+        require(amount > 0, "No value");
+        _accrue(msg.sender);
+        Investor storage inv = investors[msg.sender];
+        require(amount <= inv.fundsInvested, "Exceeds stake");
+        require(amount <= freeFunds, "Insufficient free funds");
+        inv.fundsInvested -= amount;
+        totalFunds -= amount;
+        freeFunds -= amount;
+        withdrawable[msg.sender] += amount;
+        emit Exited(msg.sender, amount);
     }
 
     function withdraw() external {

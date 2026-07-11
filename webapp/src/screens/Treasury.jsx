@@ -7,15 +7,27 @@ import deploymentJson from '../abi/deployment.json';
 import { networkFor } from '../networks';
 
 function DistributePanel() {
-  const { proposals, distributeRevenue, tx, busy } = useStore();
+  const { proposals, distributeRevenue, writeOffProposal, hasEconomyV2, tx, busy } = useStore();
   const [sel, setSel] = useState('');
+  const [selOff, setSelOff] = useState('');
+  // profit is only recognised once the capital is home — or written off
+  const capitalHome = (p) => p.principalReturned === undefined
+    || p.principalReturned >= p.requiredFunds || p.writtenOff === true;
   const eligible = proposals
     .map((p, i) => ({ ...p, _id: i }))
-    .filter(p => p.revenueReceived > p.revenuePaid);
+    .filter(p => p.revenueReceived > p.revenuePaid && capitalHome(p));
+  const writeOffable = proposals
+    .map((p, i) => ({ ...p, _id: i }))
+    .filter(p => p.secured && p.writtenOff !== true
+      && (p.principalReturned ?? 0n) < p.requiredFunds);
 
   const doDistribute = async () => {
     await distributeRevenue(Number(sel));
     setSel('');
+  };
+  const doWriteOff = async () => {
+    await writeOffProposal(Number(selOff));
+    setSelOff('');
   };
 
   return (
@@ -40,6 +52,26 @@ function DistributePanel() {
             Distribute profits
           </Button>
         </div>
+        {hasEconomyV2 && (
+          <div className="field-row" style={{ marginTop: 12 }}>
+            <Field label="Write off a failed project (final)">
+              <Select value={selOff} onChange={e => setSelOff(e.target.value)}
+                disabled={!writeOffable.length || busy} style={{ width: 320 }}>
+                <option value="" disabled>
+                  {writeOffable.length ? 'Select project with capital outstanding' : 'No capital outstanding'}
+                </option>
+                {writeOffable.map(p => (
+                  <option key={p._id} value={p._id}>
+                    #{p._id} — {p.description} · {formatEther(p.requiredFunds - (p.principalReturned ?? 0n))} ETH lost
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Button onClick={doWriteOff} disabled={selOff === '' || busy}>
+              Write off
+            </Button>
+          </div>
+        )}
         <TxStatus msg={tx.msg} tone={tx.tone} />
       </div>
     </Card>
@@ -107,21 +139,27 @@ export default function TreasuryScreen() {
                 <tr>
                   <th>#</th>
                   <th>Project</th>
+                  <th className="right">Principal home</th>
                   <th className="right">Received</th>
                   <th className="right">Paid</th>
                 </tr>
               </thead>
               <tbody>
-                {proposals.map((p, i) => p.revenueReceived > 0n && (
+                {proposals.map((p, i) => (p.revenueReceived > 0n || (p.principalReturned ?? 0n) > 0n) && (
                   <tr key={i}>
                     <td className="num">{i}</td>
-                    <td>{p.description}</td>
+                    <td>{p.description}{p.writtenOff === true ? ' · written off' : ''}</td>
+                    <td className="right num">
+                      {p.principalReturned === undefined
+                        ? '—'
+                        : `${formatEther(p.principalReturned)} / ${formatEther(p.requiredFunds)}`}
+                    </td>
                     <td className="right num">{formatEther(p.revenueReceived)}</td>
                     <td className="right num">{formatEther(p.revenuePaid)}</td>
                   </tr>
                 ))}
-                {proposals.every(p => p.revenueReceived === 0n) && (
-                  <tr><td colSpan="4" style={{ padding: 20 }}><Empty>No revenue yet.</Empty></td></tr>
+                {proposals.every(p => p.revenueReceived === 0n && (p.principalReturned ?? 0n) === 0n) && (
+                  <tr><td colSpan="5" style={{ padding: 20 }}><Empty>No revenue yet.</Empty></td></tr>
                 )}
               </tbody>
             </table>

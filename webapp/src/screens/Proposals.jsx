@@ -27,11 +27,12 @@ export function ProposalCard({ p, id }) {
         <div className="meta">
           <span><strong>#{id}</strong></span>
           <span>by <strong>{getNickname(p.manager)}</strong></span>
-          {cancelled     ? <Badge>Cancelled</Badge>
-           : settled     ? <Badge tone="ok">Settled</Badge>
-           : p.secured   ? <Badge tone="ok">Secured</Badge>
-           : expired     ? <Badge tone="warn">Expired</Badge>
-                         : <Badge tone="warn">Pending</Badge>}
+          {cancelled              ? <Badge>Cancelled</Badge>
+           : p.writtenOff === true ? <Badge>Written off</Badge>
+           : settled              ? <Badge tone="ok">Settled</Badge>
+           : p.secured            ? <Badge tone="ok">Secured</Badge>
+           : expired              ? <Badge tone="warn">Expired</Badge>
+                                  : <Badge tone="warn">Pending</Badge>}
           {voted && !p.secured && <Badge tone="blue">You voted</Badge>}
         </div>
         <div className="progress-row">

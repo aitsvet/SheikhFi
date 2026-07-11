@@ -126,6 +126,18 @@ export function StoreProvider({ children }) {
     run('Cancel proposal', () => contract.cancelProposal(Number(proposalId))),
     [contract, run]
   );
+  const returnPrincipal = useCallback((proposalId, amountWei) =>
+    run('Return principal', () => contract.returnPrincipal(Number(proposalId), { value: amountWei })),
+    [contract, run]
+  );
+  const writeOffProposal = useCallback((proposalId) =>
+    run('Write off', () => contract.writeOffProposal(Number(proposalId))),
+    [contract, run]
+  );
+  const exitFunds = useCallback((amountWei) =>
+    run('Exit', () => contract.exit(amountWei)),
+    [contract, run]
+  );
   const receiveRevenue = useCallback((proposalId, amountWei) => {
     // ABI on Polygon Amoy carries the original typo `recieveRevenue`; new
     // deployments use the fixed name. Use whichever the bound contract has.
@@ -155,7 +167,10 @@ export function StoreProvider({ children }) {
     pending:      status.myPending      || 0n,
     addInvestor, addManager, depositFunds, submitProposal,
     approveProposal, cancelProposal, receiveRevenue, distributeRevenue,
+    returnPrincipal, writeOffProposal, exitFunds,
     withdraw, settle,
+    // v2 economy functions exist on this deployment's ABI
+    hasEconomyV2: deployment.abi.some(e => e.name === 'returnPrincipal'),
     getNickname, approvalShareFor,
     busy, loading, tx, setTx, refresh,
     events, eventsLoading, eventsFailedChunks,

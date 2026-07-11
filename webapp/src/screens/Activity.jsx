@@ -15,7 +15,10 @@ const EVENT_META = {
   ThresholdChanged:   { tone: 'warn', label: 'Threshold changed' },
   VotingPeriodChanged:{ tone: 'warn', label: 'Voting period changed' },
   RevenueReceived:    { tone: 'blue', label: 'Revenue received' },
+  PrincipalReturned:  { tone: 'ok',   label: 'Principal returned' },
+  ProposalWrittenOff: { tone: 'warn', label: 'Written off' },
   RevenueDistributed: { tone: 'ok',   label: 'Revenue distributed' },
+  Exited:             { tone: 'pink', label: 'Partner exit' },
   Withdrawn:          { tone: '',     label: 'Withdrawn' },
 };
 
@@ -61,6 +64,18 @@ function describe(ev, getNickname) {
     case 'RevenueReceived':
       return (<>
         <strong>{getNickname(a[1]) || shortAddr(a[1])}</strong> delivered <span className="num">{formatEtherExact(a[2])} ETH</span> revenue on proposal <strong>#{a[0].toString()}</strong>
+      </>);
+    case 'PrincipalReturned':
+      return (<>
+        <strong>{getNickname(a[1]) || shortAddr(a[1])}</strong> returned <span className="num">{formatEtherExact(a[2])} ETH</span> of principal on proposal <strong>#{a[0].toString()}</strong>
+      </>);
+    case 'ProposalWrittenOff':
+      return (<>
+        Proposal <strong>#{a[0].toString()}</strong> written off · <span className="num">{formatEtherExact(a[1])} ETH</span> loss shared pro-rata
+      </>);
+    case 'Exited':
+      return (<>
+        <strong>{getNickname(a[0]) || shortAddr(a[0])}</strong> exited <span className="num">{formatEtherExact(a[1])} ETH</span> of stake
       </>);
     case 'RevenueDistributed':
       return (<>

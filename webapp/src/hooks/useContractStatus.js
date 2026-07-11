@@ -54,6 +54,8 @@ export function useContractStatus(contract, address) {
               approvalWeight: p.approvalWeight,
               deadline: p.deadline,
               cancelled: p.cancelled,
+              principalReturned: p.principalReturned,
+              writtenOff: p.writtenOff,
               approvers,
             };
           })

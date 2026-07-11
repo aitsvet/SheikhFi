@@ -99,16 +99,22 @@ function CouncilDesk() {
 }
 
 function OperatorDesk() {
-  const { identity, proposals, managers, submitProposal, receiveRevenue, tx, busy } = useStore();
+  const { identity, proposals, managers, submitProposal, receiveRevenue,
+          returnPrincipal, hasEconomyV2, tx, busy } = useStore();
   const [desc, setDesc] = useState('');
   const [funds, setFunds] = useState('');
   const [payment, setPayment] = useState('');
   const [selectedProposal, setSelectedProposal] = useState('');
+  const [principal, setPrincipal] = useState('');
+  const [principalProposal, setPrincipalProposal] = useState('');
 
   const mine = proposals
     .map((p, i) => ({ ...p, _id: i }))
     .filter(p => p.manager.toLowerCase() === identity.addr.toLowerCase());
-  const mySecured = mine.filter(p => p.secured);
+  const mySecured = mine.filter(p => p.secured && p.writtenOff !== true);
+  // secured projects whose capital is not fully home yet
+  const myOwing = mySecured.filter(p =>
+    (p.principalReturned ?? 0n) < p.requiredFunds);
 
   const totalRequired = mine.reduce((s, p) => s + p.requiredFunds, 0n);
   const totalReceived = mine.reduce((s, p) => s + (p.revenueReceived ?? 0n), 0n);
@@ -122,6 +128,10 @@ function OperatorDesk() {
   const doReceive = async () => {
     await receiveRevenue(Number(selectedProposal), parseEther(payment));
     setPayment(''); setSelectedProposal('');
+  };
+  const doReturnPrincipal = async () => {
+    await returnPrincipal(Number(principalProposal), parseEther(principal));
+    setPrincipal(''); setPrincipalProposal('');
   };
 
   return (
@@ -189,6 +199,39 @@ function OperatorDesk() {
         </Card>
       </div>
 
+      {hasEconomyV2 && (
+        <Card style={{ marginTop: 16 }}>
+          <CardHead title="Return principal"
+            sub="Capital goes home fee-free — profit is only recognised after it" />
+          <div className="card-body stack">
+            <Field label="Proposal">
+              <Select style={{ width: '100%' }} value={principalProposal}
+                onChange={e => setPrincipalProposal(e.target.value)}
+                disabled={!myOwing.length || busy}>
+                <option value="" disabled>
+                  {myOwing.length ? 'Select project with capital outstanding' : 'No capital outstanding'}
+                </option>
+                {myOwing.map(p => (
+                  <option key={p._id} value={p._id}>
+                    #{p._id} — {p.description} · {formatEther(p.requiredFunds - (p.principalReturned ?? 0n))} ETH outstanding
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <div className="field-row">
+              <Field label="Amount (ETH)">
+                <Input type="number" placeholder="0.0"
+                  value={principal} onChange={e => setPrincipal(e.target.value)} disabled={busy} />
+              </Field>
+              <Button variant="primary" onClick={doReturnPrincipal}
+                disabled={busy || !principal || principalProposal === ''}>
+                Return principal
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <SectionRule title="My projects" />
       {mine.length === 0
         ? <Card><Empty>You haven't submitted any proposals yet.</Empty></Card>
@@ -204,10 +247,11 @@ function OperatorDesk() {
 }
 
 function PartnerDesk() {
-  const { identity, investors, totalFunds, depositFunds, withdrawable, pending,
-          proposals, tx, busy } = useStore();
+  const { identity, investors, totalFunds, freeFunds, depositFunds, exitFunds,
+          hasEconomyV2, withdrawable, pending, proposals, tx, busy } = useStore();
   const me = investors.find(i => i.addr.toLowerCase() === identity.addr.toLowerCase());
   const myFunds = me?.fundsInvested ?? 0n;
+  const exitMax = myFunds < freeFunds ? myFunds : freeFunds;
   const sharePct = totalFunds > 0n
     ? Number((myFunds * 1000n) / totalFunds) / 10
     : 0;
@@ -215,9 +259,14 @@ function PartnerDesk() {
     (p.approvers || []).some(a => a.toLowerCase() === identity.addr.toLowerCase())).length;
 
   const [amount, setAmount] = useState('');
+  const [exitAmount, setExitAmount] = useState('');
   const doDeposit = async () => {
     await depositFunds(parseEther(amount));
     setAmount('');
+  };
+  const doExit = async () => {
+    await exitFunds(parseEther(exitAmount));
+    setExitAmount('');
   };
 
   const pendingProps = proposals
@@ -256,6 +305,23 @@ function PartnerDesk() {
               Profit and loss are shared in proportion to your share of total funds.
               Every funded project must pass the approval threshold.
             </div>
+            {hasEconomyV2 && (
+              <>
+                <Field label={`Exit (ETH) — up to ${formatEther(exitMax)} liquid`}>
+                  <Input type="number" placeholder="0.0"
+                    value={exitAmount} onChange={e => setExitAmount(e.target.value)} disabled={busy} />
+                </Field>
+                <div>
+                  <Button onClick={doExit} disabled={busy || !exitAmount || exitMax === 0n}>
+                    Exit stake
+                  </Button>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+                  Exits draw on free funds only — capital deployed in live projects
+                  stays until returned or written off.
+                </div>
+              </>
+            )}
           </div>
         </Card>
 
