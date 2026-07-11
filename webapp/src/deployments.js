@@ -3,6 +3,7 @@
 // localStorage (network selector) with the build-time deployment.json as
 // the default.
 import bundled from './abi/deployment.json';
+import { networkFor } from './networks';
 
 const modules = import.meta.glob('./abi/deployments/*.json', { eager: true });
 
@@ -24,6 +25,10 @@ export function getActiveDeployment() {
   } catch { /* storage unavailable */ }
   return bundled;
 }
+
+// Resolved once per page load — the network switch reloads the page anyway.
+export const activeDeployment = getActiveDeployment();
+export const activeNetwork = networkFor(activeDeployment);
 
 // Full reload on switch — deliberately simple: every hook rebuilds against
 // the newly active deployment.

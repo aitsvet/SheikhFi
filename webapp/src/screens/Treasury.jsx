@@ -4,9 +4,7 @@ import { Badge, Card, CardHead, Empty, Field, Input, Kpi, Select, TxStatus,
 import { Button } from '../ui';
 import { ROLES, useStore } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
-import { getActiveDeployment } from '../deployments';
-const deploymentJson = getActiveDeployment();
-import { networkFor } from '../networks';
+import { activeNetwork } from '../deployments';
 
 function DistributePanel() {
   const { proposals, distributeRevenue, writeOffProposal, hasEconomyV2, tx, busy } = useStore();
@@ -139,7 +137,7 @@ function SlashPanel() {
 export default function TreasuryScreen() {
   const { totalFunds, freeFunds, totalRevenue, proposals, identity, isBoard, hasV3,
           approveShareThreshold, getNickname, deployment } = useStore();
-  const net = networkFor(deploymentJson);
+  const net = activeNetwork;
   const securedValue = proposals
     .filter(p => p.secured)
     .reduce((s, p) => s + p.requiredFunds, 0n);

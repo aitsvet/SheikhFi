@@ -1,9 +1,7 @@
 import { Badge, Button, Card, CardHead, Empty, Kpi, Progress, formatEther } from '../ui';
 import { SCREENS, useStore } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
-import { getActiveDeployment } from '../deployments';
-const deploymentJson = getActiveDeployment();
-import { networkFor } from '../networks';
+import { activeNetwork } from '../deployments';
 
 function OverviewKpis() {
   const { totalFunds, freeFunds, totalRevenue, approveShareThreshold, proposals } = useStore();
@@ -25,7 +23,7 @@ function OverviewKpis() {
 export default function OverviewScreen() {
   const { proposals, investors, managers, getNickname,
           approvalShareFor, approveShareThreshold, setScreen } = useStore();
-  const net = networkFor(deploymentJson);
+  const net = activeNetwork;
 
   const top = [...proposals]
     .map((p, i) => ({ ...p, _id: i, share: approvalShareFor(p) }))

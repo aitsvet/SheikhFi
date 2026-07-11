@@ -1,7 +1,6 @@
 import { Avatar, Button, shortAddr } from '../ui';
 import { ROLES, SCREENS, useStore } from '../state';
-import { DEPLOYMENTS, getActiveDeployment, setActiveChain } from '../deployments';
-const deployment = getActiveDeployment();
+import { DEPLOYMENTS, activeDeployment as deployment, activeNetwork, setActiveChain } from '../deployments';
 import { networkFor } from '../networks';
 
 function NavItem({ active, label, count, onClick }) {
@@ -19,7 +18,7 @@ function NavItem({ active, label, count, onClick }) {
 export default function Sidebar() {
   const { identity, connect, screen, setScreen,
           proposals, investors, managers, events } = useStore();
-  const net = networkFor(deployment);
+  const net = activeNetwork;
 
   const deskLabel = identity.role === ROLES.OWNER    ? 'Council desk'
                   : identity.role === ROLES.MANAGER  ? 'Operator desk'

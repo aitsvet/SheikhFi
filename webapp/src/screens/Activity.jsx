@@ -1,9 +1,7 @@
 import { Badge, Card, CardHead, Empty, formatEtherExact, shortAddr } from '../ui';
 import { useStore } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
-import { getActiveDeployment } from '../deployments';
-const deploymentJson = getActiveDeployment();
-import { networkFor } from '../networks';
+import { activeNetwork } from '../deployments';
 
 const EVENT_META = {
   InvestorAdded:      { tone: 'pink', label: 'Partner onboarded' },
@@ -119,7 +117,7 @@ function describe(ev, getNickname) {
 
 export default function ActivityScreen() {
   const { events, eventsLoading, eventsFailedChunks, getNickname } = useStore();
-  const net = networkFor(deploymentJson);
+  const net = activeNetwork;
   const sub = eventsLoading
     ? 'Loading…'
     : `${events.length} event${events.length === 1 ? '' : 's'}`

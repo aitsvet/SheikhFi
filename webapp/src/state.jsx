@@ -6,8 +6,7 @@ import { useContractStatus } from './hooks/useContractStatus';
 import { useRole, ROLES } from './hooks/useRole';
 import { useDetails } from './hooks/useDetails';
 import { useEvents } from './hooks/useEvents';
-import { getActiveDeployment } from './deployments';
-const deployment = getActiveDeployment();
+import { activeDeployment as deployment } from './deployments';
 import { shortAddr } from './ui';
 
 export { ROLES };

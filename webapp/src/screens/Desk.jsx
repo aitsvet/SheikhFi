@@ -7,9 +7,7 @@ import {
 import { ROLES, isOpenProposal, useStore } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
 import { ProposalCard } from './Proposals';
-import { getActiveDeployment } from '../deployments';
-const deploymentJson = getActiveDeployment();
-import { networkFor } from '../networks';
+import { activeNetwork } from '../deployments';
 
 function CouncilDesk() {
   const { addInvestor, addManager, investors, managers,
@@ -431,7 +429,7 @@ function PartnerDesk() {
 
 function GuestDesk() {
   const { connect } = useStore();
-  const net = networkFor(deploymentJson);
+  const net = activeNetwork;
   return (
     <>
       <PageHead
