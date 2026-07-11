@@ -49,6 +49,7 @@ contract SheikhFi {
     event ManagerAdded(address indexed manager, string nickname, uint profitRate);
     event FundsDeposited(address indexed investor, uint amount);
     event ProposalSubmitted(uint indexed proposalId, address indexed manager, string description, uint fundsRequired);
+    event ProposalApproved(uint indexed proposalId, address indexed investor, uint approveShare);
     event ProposalFunded(uint indexed proposalId, address indexed manager, uint fundsRequired);
     event RevenueReceived(uint indexed proposalId, address indexed manager, uint amount);
     event RevenueDistributed(uint indexed proposalId, uint revenue);
@@ -148,6 +149,7 @@ contract SheikhFi {
     }
 
     function approveProposal(uint proposalId) external onlyInvestor {
+        require(totalFunds > 0, "No investors");
         uint fundsRequired = proposals[proposalId].fundsRequired;
         require(fundsRequired <= freeFunds, "Insufficient funds");
         require(!proposals[proposalId].secured, "Already funded");
@@ -159,6 +161,7 @@ contract SheikhFi {
             approveShare += investors[approver].fundsInvested;
         }
         approvers[proposalId].push(msg.sender);
+        emit ProposalApproved(proposalId, msg.sender, approveShare);
         // if the approve share exceeds threshold, the proposal is funded
         if (approveShare * 100 / totalFunds >= approveShareThreshold) {
             address manager = proposals[proposalId].manager;
@@ -174,6 +177,7 @@ contract SheikhFi {
     function receiveRevenue(uint proposalId) external payable {
         require(msg.value > 0, "No value");
         require(msg.sender == proposals[proposalId].manager, "Not proposal manager");
+        require(proposals[proposalId].secured, "Not secured");
         proposals[proposalId].revenueReceived += msg.value;
         emit RevenueReceived(proposalId, msg.sender, msg.value);
     }
@@ -182,7 +186,9 @@ contract SheikhFi {
     function distributeRevenue(uint proposalId) external onlyOwner {
         uint revenue = proposals[proposalId].revenueReceived - proposals[proposalId].revenuePaid;
         require(revenue > 0, "No revenue");
-        require(totalFunds > 0, "No investors");
+        // totalFunds > 0 is invariant here: revenue implies a secured proposal,
+        // securing implies a vote, and approveProposal requires totalFunds > 0
+        // (totalFunds never decreases).
         proposals[proposalId].revenuePaid = proposals[proposalId].revenueReceived;
 
         address manager = proposals[proposalId].manager;

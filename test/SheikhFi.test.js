@@ -255,6 +255,24 @@ describe("SheikhFi", function () {
       expect((await bank.proposals(0)).secured).to.be.true;
     });
 
+    it("reverts with No investors when the pool is empty (no division by zero)", async function () {
+      // Zero-fund proposal on an empty pool: the vote must revert cleanly,
+      // not panic on approveShare * 100 / totalFunds.
+      const { bank, ali, charlie } = await deployFixture();
+      await bank.connect(ali).addManager(charlie.address, "Charlie", 0);
+      await bank.connect(charlie).submitProposal("Zero-fund test", 0);
+      await expect(bank.connect(ali).approveProposal(0))
+        .to.be.revertedWith("No investors");
+    });
+
+    it("emits ProposalApproved with the running approve share", async function () {
+      const { bank, ali } = await deployWithProposal();
+      // Ali has 10 ETH of 30 total
+      await expect(bank.connect(ali).approveProposal(0))
+        .to.emit(bank, "ProposalApproved")
+        .withArgs(0, ali.address, ethers.parseEther("10"));
+    });
+
     it("rejects double-vote", async function () {
       const { bank, ali } = await deployWithProposal();
       await bank.connect(ali).approveProposal(0);
@@ -302,7 +320,9 @@ describe("SheikhFi", function () {
       await bad.deposit(await bank.getAddress(), { value: ethers.parseEther("5") });
 
       await bank.connect(charlie).submitProposal("Test", ethers.parseEther("5"));
+      // bob 20 + ali 10 of 35 total = 85.7% ≥ 60% threshold
       await bank.connect(bob).approveProposal(0);
+      await bank.connect(ali).approveProposal(0);
       await bank.connect(charlie).receiveRevenue(0, { value: ethers.parseEther("15") });
 
       // Must not revert even though BadReceiver would revert on ETH push
@@ -363,14 +383,10 @@ describe("SheikhFi", function () {
         .to.be.revertedWith("No revenue");
     });
 
-    it("reverts with No investors when totalFunds is zero", async function () {
-      // Submit a proposal for 0 ETH (no deposits yet), send revenue, then try to distribute
-      const { bank, ali, charlie } = await deployFixture();
-      await bank.connect(ali).addManager(charlie.address, "Charlie", 0);
-      await bank.connect(charlie).submitProposal("Zero-fund test", 0);
-      await bank.connect(charlie).receiveRevenue(0, { value: ethers.parseEther("1") });
-      await expect(bank.connect(ali).distributeRevenue(0))
-        .to.be.revertedWith("No investors");
+    it("receiveRevenue reverts on a proposal that is not secured", async function () {
+      const { bank, charlie } = await deployWithProposal();
+      await expect(bank.connect(charlie).receiveRevenue(0, { value: ethers.parseEther("1") }))
+        .to.be.revertedWith("Not secured");
     });
   });
 
@@ -546,7 +562,9 @@ describe("SheikhFi", function () {
       await bank.connect(bob).depositFunds({ value: ethers.parseEther("10") });
 
       await bank.connect(charlie).submitProposal("Test", ethers.parseEther("1"));
+      // bob 10 + ali 10 of 20 total = 100% ≥ 60% threshold
       await bank.connect(bob).approveProposal(0);
+      await bank.connect(ali).approveProposal(0);
 
       await bank.connect(charlie).receiveRevenue(0, { value: ethers.parseEther("20") });
       await bank.connect(ali).distributeRevenue(0);
