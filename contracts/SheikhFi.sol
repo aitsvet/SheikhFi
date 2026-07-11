@@ -216,6 +216,9 @@ contract SheikhFi {
         uint delta = cumulativePerShare - i.checkpoint;
         if (delta == 0) return;
         uint gross = delta * i.fundsInvested / SCALE;
+        // the (100 - profitRate)%% owner cut is the managing partner's extra
+        // profit share — AAOIFI SS 12 3/1/3/4 and 3/1/5/3 (a share of profit,
+        // never a fixed remuneration)
         uint myPart = gross * i.profitRate / 100;
         uint ownerPart = gross - myPart;
         withdrawable[inv] += myPart;
@@ -240,6 +243,8 @@ contract SheikhFi {
 
     // -------------------------------------------------------------- deposits
 
+    /// @notice AAOIFI SS 12 3/1/5/3 — shares follow capital contributions;
+    /// mints the SHFI share token one-to-one with the stake.
     function depositFunds(uint amount) external payable onlyInvestor {
         require(amount > 0, "No value");
         _pull(amount);
@@ -275,7 +280,8 @@ contract SheikhFi {
         emit ProposalSubmitted(proposalId, msg.sender, description, requiredFunds);
     }
 
-    // board sign-off on the real-asset documents; voting opens only after
+    /// @notice AAOIFI SS 31 4/2/1 — gharar control: the board reviews the
+    /// real-asset documents (docsHash) before voting can open.
     function certifyProposal(uint proposalId) external onlyBoard {
         Proposal storage p = proposals[proposalId];
         require(!p.cancelled, "Cancelled");
@@ -558,6 +564,8 @@ contract SheikhFi {
         return true;
     }
 
+    /// @dev AAOIFI SS 17 5/2/16 — Musharakah certificates are tradable after
+    /// commencement of activity; the pool stays permissioned (investors only).
     function _transferShares(address from, address to, uint amount) internal {
         require(isInvestor(from) && isInvestor(to), "Not investor");
         // crystallise both sides at their pre-transfer shares first

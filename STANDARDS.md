@@ -196,16 +196,30 @@ on-chain) — за недобросовестность, небрежность 
 > allotment of the certificates and commencement of activity with respect to
 > the assets and usufructs."
 
-## Сводка
+## Трассировка: требование → пункт → реализация → тесты
 
-Все разрывы, найденные аудитом, закрыты (экономика v2 + расширения v3):
+Несущие функции контракта цитируют свой пункт стандарта в NatSpec
+(`grep "AAOIFI" contracts/SheikhFi.sol`). Инварианты I1–I6 непрерывно
+проверяются на случайной последовательности операций —
+`test/Invariants.test.js` (детерминированный seed, воспроизводимо).
 
-| № | Механизм | Пункты стандарта | Статус |
-| --- | --- | --- | --- |
-| 4 | Fee менеджера — только из прибыли | SS 13 8/1; SS 12 3/1/3/3 | ✅ `returnPrincipal` без комиссий |
-| 5 | Прибыль после восстановления капитала | SS 13 8/7; SS 12 3/1/5/6 | ✅ гейт `Principal outstanding` |
-| 6 | Убытки пропорционально вкладам | SS 12 3/1/5/4; SS 13 8/7 | ✅ `writeOffProposal` |
-| 8 | Выход партнёра по конструктивной оценке | SS 12 3/1/6/2, 3/1/5/9 | ✅ `exit` из свободных средств |
-| 9 | Предмет сделки: документы + сертификация | SS 31 4/1, 4/2/1 | ✅ `docsHash` + `certifyProposal` |
-| 11 | Залог — только под вердикт совета | SS 13 разд. 6, 8/7 | ✅ `slashCollateral(reason)` |
-| 12 | Токенизация долей | SS 17 3/6, 5/2/16 | ✅ ERC-20 SHFI, пермиссионные переводы |
+| § | Требование | Пункты AAOIFI | Реализация | Тесты |
+| --- | --- | --- | --- | --- |
+| 1 | Доли пропорциональны вкладам | SS 12 3/1/5/3 | `depositFunds`, `_accrue` | «Happy path»; I2 |
+| 2 | Ставка прибыли зафиксирована при вступлении | SS 12 3/1/5/2 | `addInvestor(profitRate)` | «personalized profit rates respected» |
+| 3 | Доля владельца — доля прибыли, не фикс | SS 12 3/1/3/4, 3/1/5/3 | `_accrue` (owner cut) | «personalized…»; «ownership: transfer…» |
+| 4 | Fee менеджера — только из прибыли | SS 13 8/1; SS 12 3/1/3/3 | `returnPrincipal` без комиссий | «returnPrincipal restores freeFunds fee-free» |
+| 5 | Прибыль после восстановления капитала | SS 13 8/7; SS 12 3/1/5/6 | гейт `Principal outstanding` | «profit is not recognised until the capital is home»; I4 |
+| 6 | Убытки строго пропорционально вкладам | SS 12 3/1/5/4; SS 13 8/7 | `writeOffProposal` | «write-off reduces stakes pro-rata…»; I6 |
+| 7 | Нет гарантированного дохода | SS 12 3/1/5/7 | выплаты только из фактической выручки | «distribute reverts cleanly when every stake has exited»; I3 |
+| 8 | Выход по конструктивной оценке | SS 12 3/1/6/2, 3/1/5/9 | `exit` из свободных средств | «exit pays out of free funds…»; I1, I2 |
+| 9 | Гарар: документы + сертификация совета | SS 31 4/1, 4/2/1 | `docsHash`, `certifyProposal` | describe «Sharia board (PLAN v3 §3)» |
+| 10 | Управление ограничено кругом лиц | SS 12 3/1/3/2 | `onlyOwner`/`onlyBoard` + голосование | describe «Access control» |
+| 11 | Yad amanah; залог — только под вердикт | SS 13 разд. 6, 8/7 | убыток на капитал; `slashCollateral(reason)` | describe «Collateral (PLAN v3 §5)» |
+| 12 | Доли торгуемы после начала деятельности | SS 17 3/6, 5/2/16 | ERC-20 SHFI, `_transferShares` | describe «Tokenized shares (PLAN v3 §1)»; I2 |
+
+Инварианты (`test/Invariants.test.js`): **I1** платёжеспособность (баланс ≥
+freeFunds + Σ withdrawable + Σ collateral), **I2** книги = токен (totalFunds =
+Σ вкладов = totalSupply), **I3** монотонность аккумулятора прибыли, **I4**
+распределение только при целом капитале, **I5** вес голоса заморожен, **I6**
+списание сохраняет относительные доли.
