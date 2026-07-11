@@ -13,7 +13,11 @@ export function useRole(contract, address, ownerAddress) {
   useEffect(() => {
     if (!contract || !address) { setRole(ROLES.NONE); return; }
     (async () => {
-      if (address.toLowerCase() === ownerAddress.toLowerCase()) {
+      // live owner() survives an on-chain ownership transfer; the static
+      // deployment.json value is only a fallback for an unreachable RPC
+      let liveOwner = ownerAddress;
+      try { liveOwner = await contract.owner(); } catch { /* keep fallback */ }
+      if (address.toLowerCase() === liveOwner.toLowerCase()) {
         setRole(ROLES.OWNER); return;
       }
       let isManager = false, isInvestor = false;

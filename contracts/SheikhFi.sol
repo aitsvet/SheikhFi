@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 contract SheikhFi {
 
     address public owner;
+    address public pendingOwner;
     string public ownerNickname;
 
     uint public totalFunds;
@@ -59,6 +60,8 @@ contract SheikhFi {
     event ProposalCancelled(uint indexed proposalId);
     event ThresholdChanged(uint threshold);
     event VotingPeriodChanged(uint period);
+    event OwnershipTransferStarted(address indexed from, address indexed to);
+    event OwnershipTransferred(address indexed from, address indexed to);
     event RevenueReceived(uint indexed proposalId, address indexed manager, uint amount);
     event RevenueDistributed(uint indexed proposalId, uint revenue);
     event Withdrawn(address indexed account, uint amount);
@@ -203,6 +206,31 @@ contract SheikhFi {
         require(p >= 1 days && p <= 365 days, "Bad period");
         votingPeriod = p;
         emit VotingPeriodChanged(p);
+    }
+
+    // Two-step ownership transfer. The new owner must already be an investor:
+    // _accrue routes the owner cut to investors[owner], which must be a real
+    // record for the accounting to stay consistent.
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(isInvestor(newOwner), "Not investor");
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        require(msg.sender == pendingOwner, "Not pending owner");
+        // crystallise everything earned under the old rate before switching:
+        // pre-transfer accruals keep their old split, and only then does the
+        // new owner stop paying the owner cut
+        _accrue(msg.sender);
+        investors[msg.sender].profitRate = 100;
+        // the old owner keeps profitRate 100 as an ordinary investor — an
+        // "emeritus" pays no cut to the new owner; deliberate choice
+        address old = owner;
+        owner = msg.sender;
+        ownerNickname = investors[msg.sender].nickname;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(old, msg.sender);
     }
 
     // manager receives revenue from the investment in real-world asset

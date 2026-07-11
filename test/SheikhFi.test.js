@@ -760,6 +760,63 @@ describe("SheikhFi", function () {
       expect(await bank.votingPeriod()).to.equal(BigInt(7 * 24 * 3600));
     });
 
+    it("ownership: transfer requires investor, two-step works, rates adjust", async function () {
+      const { bank, ali, bob, charlie, dave } = await deployWithDistribution();
+
+      // new owner must be an investor
+      await expect(bank.connect(ali).transferOwnership(dave.address))
+        .to.be.revertedWith("Not investor");
+      // only owner can start the transfer
+      await expect(bank.connect(bob).transferOwnership(bob.address))
+        .to.be.revertedWith("Not owner");
+
+      await expect(bank.connect(ali).transferOwnership(bob.address))
+        .to.emit(bank, "OwnershipTransferStarted").withArgs(ali.address, bob.address);
+      // only the pending owner can accept
+      await expect(bank.connect(charlie).acceptOwnership())
+        .to.be.revertedWith("Not pending owner");
+
+      await expect(bank.connect(bob).acceptOwnership())
+        .to.emit(bank, "OwnershipTransferred").withArgs(ali.address, bob.address);
+
+      expect(await bank.owner()).to.equal(bob.address);
+      expect(await bank.ownerNickname()).to.equal("Bob");
+      expect(await bank.pendingOwner()).to.equal(ethers.ZeroAddress);
+
+      // pre-transfer accrual was crystallised at bob's OLD rate (95%):
+      // investor revenue 40 ETH, bob gross = 40 * 20/30, myPart = 95%
+      const bobGross = ethers.parseEther("40") * 20n / 30n;
+      const bobPreTransfer = bobGross * 95n / 100n;
+      const bobProfit = (await bank.investors(bob.address)).profit;
+      expect(bobProfit).to.be.gte(bobPreTransfer - 10n);
+      expect(bobProfit).to.be.lte(bobPreTransfer);
+      expect(Number((await bank.investors(bob.address)).profitRate)).to.equal(100);
+
+      // owner-only functions moved to bob
+      await expect(bank.connect(ali).setApproveShareThreshold(50))
+        .to.be.revertedWith("Not owner");
+      await bank.connect(bob).setApproveShareThreshold(50);
+
+      // post-transfer distribution: bob accrues at 100%, ali (old owner,
+      // rate 100) pays no cut to the new owner. Settle both first so the
+      // "before" snapshots include everything from the first distribution.
+      await bank.settle(ali.address);
+      await bank.settle(bob.address);
+      const bobBefore = (await bank.investors(bob.address)).profit;
+      const aliBefore = (await bank.investors(ali.address)).profit;
+      await bank.connect(charlie).receiveRevenue(0, { value: ethers.parseEther("30") });
+      await bank.connect(bob).distributeRevenue(0);
+      await bank.settle(bob.address);
+      await bank.settle(ali.address);
+      const bobDelta = (await bank.investors(bob.address)).profit - bobBefore;
+      const aliDelta = (await bank.investors(ali.address)).profit - aliBefore;
+      // investor revenue 24 ETH: bob 24*20/30 = 16, ali 24*10/30 = 8
+      expect(bobDelta).to.be.gte(ethers.parseEther("16") - 10n);
+      expect(bobDelta).to.be.lte(ethers.parseEther("16"));
+      expect(aliDelta).to.be.gte(ethers.parseEther("8") - 10n);
+      expect(aliDelta).to.be.lte(ethers.parseEther("8"));
+    });
+
     it("vote gas does not grow with the number of prior votes", async function () {
       const signers = await ethers.getSigners();
       const SheikhFi = await ethers.getContractFactory("SheikhFi");
