@@ -1,6 +1,6 @@
-# Build the SheikhFi webapp and force-push the static dist/ to the
-# `gh-pages` branch as an orphan single commit. Runs on every push to
-# main, plus manual workflow_dispatch.
+# Test the contract + lint the webapp, then build the SheikhFi webapp
+# and force-push the static dist/ to the `gh-pages` branch as an orphan
+# single commit. Runs on every push to main, plus manual workflow_dispatch.
 #
 # Vite is configured with `base: './'` so the bundle uses relative
 # asset paths — no env vars needed at build time.
@@ -16,7 +16,33 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install (hardhat)
+        run: npm ci
+
+      - name: Contract tests
+        run: npx hardhat test
+
+      - name: Install (webapp)
+        working-directory: webapp
+        run: npm ci
+
+      - name: Lint webapp
+        working-directory: webapp
+        run: npm run lint
+
   build-deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
