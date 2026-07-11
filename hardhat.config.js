@@ -16,6 +16,8 @@ module.exports = {
     version: "0.8.30",
     settings: {
       optimizer: { enabled: true, runs: 200 },
+      // the 15-field Proposal getter blows the plain-codegen stack
+      viaIR: true,
     },
   },
   // hardhat-verify ships with @nomicfoundation/hardhat-toolbox;
