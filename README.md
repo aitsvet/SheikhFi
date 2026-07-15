@@ -103,8 +103,12 @@ Polygon Amoy (`0x408f311ff021e4bba7a3088b6a1c4af1a9c23994`). Веб-прилож
 (`docker-compose.yml`, node 20.19.0, репозиторий примонтирован):
 
 ```bash
-# всё сразу: тесты + coverage + lint + build + контейнерный e2e
+# всё сразу: доказательства + тесты + coverage + lint + build + контейнерный e2e
 ./scripts/verify.sh
+
+# формальная верификация: доказывает шариатские инварианты для всех входов
+# (Halmos, ~4 с) — подробности и границы в STANDARDS.md
+docker compose run --rm halmos
 
 docker compose run --rm node 'npm ci && npx hardhat test'
 docker compose run --rm node 'npx hardhat coverage'

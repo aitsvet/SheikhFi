@@ -1,0 +1,22 @@
+# Foundry is here for one job: symbolic verification with Halmos.
+# Hardhat stays the toolchain for unit tests, deploy and the webapp —
+# `npx hardhat test` remains the regression suite.
+#
+#   docker compose run --rm halmos     → prove the check_* properties
+#
+# solc / via_ir mirror hardhat.config.js so Halmos reasons about the same
+# bytecode Hardhat deploys.
+[profile.default]
+src = "contracts"
+# `out` must stay "out": halmos looks there regardless of this setting.
+# It does not collide with Hardhat (artifacts/).
+out = "out"
+# Foundry's default cache dir is `cache` — the same one Hardhat uses. Halmos
+# runs as root, so sharing it makes `npx hardhat test` fail with EACCES.
+cache_path = "forge-cache"
+test = "test/verify"
+libs = []
+solc = "0.8.30"
+optimizer = true
+optimizer_runs = 200
+via_ir = true

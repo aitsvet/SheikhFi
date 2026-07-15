@@ -17,6 +17,39 @@ services:
       - .:/app
     entrypoint: ["bash", "-c"]
 
+  # ------------------------------------------------------- formal verification
+  # Halmos (a16z) symbolically executes test/verify/Verify.t.sol and PROVES the
+  # check_* properties for every input, or prints a counterexample. Unlike the
+  # invariant walk in test/Invariants.test.js it cannot merely fail to find a
+  # bug. Proofs are bounded — see the header of Verify.t.sol.
+  #   docker compose run --rm halmos
+  halmos:
+    image: ghcr.io/a16z/halmos:0.3.3
+    profiles: ["tools"]
+    # Runs as root: the image's python venv lives under /root and is unreadable
+    # to any other uid. Its only outputs are out/ and forge-cache/ — both
+    # gitignored, and both kept off Hardhat's artifacts/ and cache/ (foundry.toml)
+    # so a root-owned forge build cannot break `npx hardhat test`.
+    working_dir: /app
+    environment:
+      HOME: /tmp
+    volumes:
+      - .:/app
+    entrypoint: ["halmos"]
+    # --loop 4       : the write-off iterates investorAddresses, fixed at 3 in setUp
+    # --solver cvc5-int : the pro-rata proof divides (stake * loss / totalFunds).
+    #                  cvc5's integer encoding discharges it in ~2s; the default
+    #                  bitvector solvers (yices, bitwuzla) time out past 120s.
+    command:
+      - "--contract"
+      - "VerifyTest"
+      - "--loop"
+      - "4"
+      - "--solver"
+      - "cvc5-int"
+      - "--solver-timeout-assertion"
+      - "120000"
+
   # ------------------------------------------------------------ e2e pipeline
   # Full local flow in containers: chain → deploy → webapp → playwright.
   #   docker compose --profile e2e up --abort-on-container-exit e2e

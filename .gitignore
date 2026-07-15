@@ -11,3 +11,5 @@ e2e/node_modules
 e2e/test-results
 e2e/playwright-report
 webapp/src/abi/deployments/31337.json
+/out
+/forge-cache

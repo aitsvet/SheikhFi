@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Full verification pipeline, everything in containers (no host toolchain):
-# contract tests + coverage → webapp lint + build → containerised e2e.
-# Restores whatever deployment was active before the e2e run.
+# symbolic proofs → contract tests + coverage → webapp lint + build →
+# containerised e2e. Restores whatever deployment was active before the e2e run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ACTIVE_CHAIN=$(python3 -c "import json; print(json.load(open('webapp/src/abi/deployment.json'))['chainId'])")
+
+# Symbolic proofs first: they are the strongest check and the fastest (~4s).
+# Halmos proves the Shari'ah invariants for every input, or prints a
+# counterexample — see STANDARDS.md «Формальная верификация».
+docker compose run --rm halmos
 
 docker compose run --rm node 'npm ci --no-audit --no-fund && npx hardhat test'
 docker compose run --rm node 'npx hardhat coverage 2>&1 | tail -10'
