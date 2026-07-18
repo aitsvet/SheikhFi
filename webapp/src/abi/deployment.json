@@ -1,5 +1,5 @@
 {
-  "contractAddress": "0xE0b29B49Af548a7cBAf7CaAc999197D895d8D0E0",
+  "contractAddress": "0x7F4d6b3abCE0D03cB75432B719326DBD9540C76b",
   "abi": [
     {
       "inputs": [
@@ -141,6 +141,25 @@
         {
           "indexed": false,
           "internalType": "uint256",
+          "name": "at",
+          "type": "uint256"
+        }
+      ],
+      "name": "ExitNoticed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "investor",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
           "name": "amount",
           "type": "uint256"
         }
@@ -215,6 +234,19 @@
         }
       ],
       "name": "ManagerAdded",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "period",
+          "type": "uint256"
+        }
+      ],
+      "name": "NoticePeriodChanged",
       "type": "event"
     },
     {
@@ -553,6 +585,19 @@
       "type": "function"
     },
     {
+      "inputs": [],
+      "name": "activityCommenced",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "address",
@@ -833,6 +878,25 @@
       "type": "function"
     },
     {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "name": "exitNoticeAt",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [],
       "name": "freeFunds",
       "outputs": [
@@ -1101,6 +1165,26 @@
     },
     {
       "inputs": [],
+      "name": "noticeExit",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "noticePeriod",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
       "name": "owner",
       "outputs": [
         {
@@ -1259,6 +1343,16 @@
           "internalType": "bool",
           "name": "certified",
           "type": "bool"
+        },
+        {
+          "internalType": "uint256",
+          "name": "lossWrittenOff",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "lossRestored",
+          "type": "uint256"
         }
       ],
       "stateMutability": "view",
@@ -1354,6 +1448,19 @@
         }
       ],
       "name": "setBoard",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "p",
+          "type": "uint256"
+        }
+      ],
+      "name": "setNoticePeriod",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -1628,5 +1735,5 @@
   "ownerNickname": "Ali",
   "network": "baseSepolia",
   "chainId": 84532,
-  "deployBlock": 44009926
+  "deployBlock": 44283938
 }
