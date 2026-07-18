@@ -32,7 +32,7 @@ function mulberry32(seed) {
 
 describe("Invariants (randomized ops)", function () {
   it("I1–I6 hold across a seeded random op sequence", async function () {
-    const [ali, bob, dave, charlie, erin] = await ethers.getSigners();
+    const [ali, bob, dave, charlie, erin, frank] = await ethers.getSigners();
     const SheikhFi = await ethers.getContractFactory("SheikhFi");
     const bank = await SheikhFi.deploy("Ali", 60, ethers.ZeroAddress);
     await bank.waitForDeployment();
@@ -42,6 +42,11 @@ describe("Invariants (randomized ops)", function () {
     await bank.addInvestor(dave.address, "Dave", 80);
     await bank.addManager(charlie.address, "Charlie", 20);
     await bank.addManager(erin.address, "Erin", 30);
+    // v5 §5: certification needs a board separate from the owner
+    await bank.setBoard(frank.address);
+    // v5 §2: the walk arms a notice before every exit; a zero period keeps
+    // the walk dense (the arming itself is still exercised every time)
+    await bank.setNoticePeriod(0);
 
     const investors = [ali, bob, dave];
     const managersS = [charlie, erin];
@@ -70,7 +75,7 @@ describe("Invariants (randomized ops)", function () {
         if (req === 0n) return;
         const tranches = 1 + Math.floor(rnd() * 3);
         await bank.connect(m).submitProposal(`P${proposalCount}`, req, "", tranches);
-        await bank.certifyProposal(proposalCount);
+        await bank.connect(frank).certifyProposal(proposalCount);
         proposalCount += 1;
       },
       async () => {
@@ -82,7 +87,7 @@ describe("Invariants (randomized ops)", function () {
       async () => {
         if (proposalCount === 0) return;
         lastOp = 'release';
-        await bank.releaseTranche(Math.floor(rnd() * proposalCount));
+        await bank.connect(frank).releaseTranche(Math.floor(rnd() * proposalCount));
       },
       async () => {
         if (proposalCount === 0) return;
@@ -130,6 +135,7 @@ describe("Invariants (randomized ops)", function () {
         const cap = stake < free ? stake : free;
         if (cap === 0n) return;
         const a = cap / BigInt(1 + Math.floor(rnd() * 4)) + 1n;
+        await bank.connect(s).noticeExit();
         await bank.connect(s).exit(a > cap ? cap : a);
       },
       async () => {
@@ -155,7 +161,7 @@ describe("Invariants (randomized ops)", function () {
         const coll = (await bank.managers(p.manager)).collateral;
         const cap = shortfall < coll ? shortfall : coll;
         if (cap === 0n) return;
-        await bank.slashCollateral(p.manager, id, cap / 2n + 1n, "invariant-walk verdict");
+        await bank.connect(frank).slashCollateral(p.manager, id, cap / 2n + 1n, "invariant-walk verdict");
       },
       async () => {
         lastOp = 'withdraw';

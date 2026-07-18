@@ -68,6 +68,8 @@ contract SheikhFi {
         uint tranches;                 // capital is disbursed in this many parts
         uint tranchesReleased;
         bool certified;                // board sign-off; voting opens only after
+        uint lossWrittenOff;           // capital cut from investors at write-off
+        uint lossRestored;             // portion of that loss later restored from collateral
     }
     Proposal[] public proposals;
     address[][] public approvers;      // list of investors who approved the proposal
@@ -76,6 +78,16 @@ contract SheikhFi {
     uint public votingPeriod = 30 days;
 
     mapping(address => uint) public withdrawable;
+
+    // SS 12 3/1/6/1: withdrawal only "after giving his partner/s due notice".
+    mapping(address => uint) public exitNoticeAt;
+    uint public noticePeriod = 48 hours;
+
+    // SS 17 5/2/1: before commencement of activity the pool is pure money and
+    // share transfers would fall under sarf rules (par, spot) that a token
+    // transfer with off-chain consideration cannot honour. Set at the first
+    // funded proposal, never unset.
+    bool public activityCommenced;
 
     event InvestorAdded(address indexed investor, string nickname, uint profitRate);
     event ManagerAdded(address indexed manager, string nickname, uint profitRate);
@@ -96,6 +108,8 @@ contract SheikhFi {
     event ProposalWrittenOff(uint indexed proposalId, uint loss);
     event RevenueDistributed(uint indexed proposalId, uint revenue);
     event Exited(address indexed investor, uint amount);
+    event ExitNoticed(address indexed investor, uint at);
+    event NoticePeriodChanged(uint period);
     event Withdrawn(address indexed account, uint amount);
     event CollateralPosted(address indexed manager, uint amount);
     event CollateralWithdrawn(address indexed manager, uint amount);
@@ -281,8 +295,11 @@ contract SheikhFi {
     }
 
     /// @notice AAOIFI SS 31 4/2/1 — gharar control: the board reviews the
-    /// real-asset documents (docsHash) before voting can open.
+    /// real-asset documents (docsHash) before voting can open. GS 19 ¶6/¶13:
+    /// the review is external only if the board is not the owner — until the
+    /// roles are actually separated (setBoard), certification is impossible.
     function certifyProposal(uint proposalId) external onlyBoard {
+        require(msg.sender != owner, "Board is owner");
         Proposal storage p = proposals[proposalId];
         require(!p.cancelled, "Cancelled");
         require(!p.certified, "Already certified");
@@ -319,6 +336,7 @@ contract SheikhFi {
             // the whole amount is reserved, but only tranche #1 is disbursed
             freeFunds -= p.fundsRequired;
             p.secured = true;
+            activityCommenced = true; // SS 17 5/2/1: share trading may open
             p.tranchesReleased = 1;
             uint firstTranche = p.tranches == 1 ? p.fundsRequired : p.fundsRequired / p.tranches;
             managers[manager].fundsSecured += p.fundsRequired;
@@ -408,10 +426,25 @@ contract SheikhFi {
         Proposal storage p = proposals[proposalId];
         require(p.secured, "Not secured");
         require(!p.writtenOff, "Written off");
+        bool wasActive = p.principalReturned < p.fundsRequired;
         uint released = _releasedAmount(p);
+        // Jabr al-khasarah (AAOIFI SS 40 3/2/1): revenue still sitting in the
+        // contract covers the shortfall of its own operation FIRST — it is
+        // capital recovery, so neither the manager fee nor the owner cut may
+        // touch it (SS 13 8/7). Only the excess over the shortfall remains
+        // distributable as ordinary profit via distributeRevenue, whose
+        // principal gate passes exactly when the shortfall is healed.
+        uint undistributed = p.revenueReceived - p.revenuePaid;
+        uint shortfall = released - p.principalReturned;
+        uint towardPrincipal = undistributed > shortfall ? shortfall : undistributed;
+        if (towardPrincipal > 0) {
+            p.revenuePaid += towardPrincipal;
+            p.principalReturned += towardPrincipal;
+            freeFunds += towardPrincipal;
+        }
         uint unreleased = p.fundsRequired - released;
         uint loss = released - p.principalReturned;
-        require(loss > 0 || unreleased > 0, "Nothing to write off");
+        require(loss > 0 || unreleased > 0 || towardPrincipal > 0, "Nothing to write off");
         if (unreleased > 0) {
             freeFunds += unreleased; // lift the reservation for undisbursed tranches
         }
@@ -428,8 +461,9 @@ contract SheikhFi {
             }
             // truncation dust stays as stake, keeping totalFunds == Σ fundsInvested
             totalFunds -= reduced;
+            p.lossWrittenOff = reduced; // slashCollateral may restore up to this
         }
-        if (p.principalReturned < p.fundsRequired) {
+        if (wasActive) {
             managers[p.manager].activeProjects -= 1;
         }
         p.writtenOff = true;
@@ -441,9 +475,13 @@ contract SheikhFi {
         Proposal storage p = proposals[proposalId];
         uint revenue = p.revenueReceived - p.revenuePaid;
         require(revenue > 0, "No revenue");
-        // profit is recognised only once the disbursed capital is home
-        // (AAOIFI SS 13 8/7) — or the shortfall has been written down
-        require(p.principalReturned == _releasedAmount(p) || p.writtenOff, "Principal outstanding");
+        // profit is recognised only once the disbursed capital is home —
+        // repaid by the manager, restored by write-off netting, or
+        // compensated from collateral (AAOIFI SS 13 8/7, SS 40 3/2/1).
+        // A written-off shortfall never turns into "profit": the old
+        // `|| writtenOff` branch paid the manager a fee out of a loss-making
+        // operation and streamed capital recovery through the owner cut.
+        require(p.principalReturned == _releasedAmount(p), "Principal outstanding");
         // reachable: every investor may have exited fully by the time the
         // revenue arrives, leaving nobody to distribute to
         require(totalFunds > 0, "No investors");
@@ -463,13 +501,31 @@ contract SheikhFi {
         emit RevenueDistributed(proposalId, revenue);
     }
 
+    /// @notice AAOIFI SS 12 3/1/6/1 — withdrawal only after due notice to the
+    /// partners. The notice window also gives the owner time to write off an
+    /// impaired project before the exiting stake escapes its share of the loss.
+    function noticeExit() external onlyInvestor {
+        exitNoticeAt[msg.sender] = block.timestamp;
+        emit ExitNoticed(msg.sender, block.timestamp);
+    }
+
+    function setNoticePeriod(uint p) external onlyOwner {
+        require(p <= 30 days, "Bad period");
+        noticePeriod = p;
+        emit NoticePeriodChanged(p);
+    }
+
     // investor takes part of their stake back out of the free pool — an exit
     // at constructive valuation (AAOIFI SS 12 3/1/6/2, 3/1/5/9): freeFunds is
     // realised cash and the stake is already net of written-off losses;
     // capital deployed into live projects cannot leave until returned or
-    // written off
+    // written off. Gated by due notice (SS 12 3/1/6/1); each exit consumes
+    // its notice.
     function exit(uint amount) external onlyInvestor {
         require(amount > 0, "No value");
+        uint noticed = exitNoticeAt[msg.sender];
+        require(noticed != 0 && block.timestamp >= noticed + noticePeriod, "Notice not elapsed");
+        delete exitNoticeAt[msg.sender];
         _accrue(msg.sender);
         Investor storage inv = investors[msg.sender];
         require(amount <= inv.fundsInvested, "Exceeds stake");
@@ -504,22 +560,48 @@ contract SheikhFi {
         emit CollateralWithdrawn(msg.sender, amount);
     }
 
-    // the call itself is the verdict; `reason` records the grounds
+    // the call itself is the verdict; `reason` records the grounds. A verdict
+    // may also land after the write-off (SS 13 §6 does not expire): then the
+    // compensation restores the freshly written-off stakes pro-rata, capped
+    // by the loss actually written off for this proposal.
     function slashCollateral(address manager, uint proposalId, uint amount, string calldata reason) external onlyBoard {
         require(amount > 0, "No value");
         Proposal storage p = proposals[proposalId];
         require(p.manager == manager, "Not proposal manager");
         require(p.secured, "Not secured");
-        require(!p.writtenOff, "Written off");
         Manager storage m = managers[manager];
         require(amount <= m.collateral, "Exceeds collateral");
-        require(amount <= _releasedAmount(p) - p.principalReturned, "Exceeds shortfall");
-        m.collateral -= amount;
-        // compensation restores the pool's capital, like a principal return
-        p.principalReturned += amount;
-        freeFunds += amount;
-        if (p.principalReturned == p.fundsRequired) {
-            m.activeProjects -= 1;
+        if (!p.writtenOff) {
+            require(amount <= _releasedAmount(p) - p.principalReturned, "Exceeds shortfall");
+            m.collateral -= amount;
+            // compensation restores the pool's capital, like a principal return
+            p.principalReturned += amount;
+            freeFunds += amount;
+            if (p.principalReturned == p.fundsRequired) {
+                m.activeProjects -= 1;
+            }
+        } else {
+            // post-mortem verdict: un-write the loss, pro-rata to current
+            // stakes (the same books the write-off cut; interim membership
+            // drift is accepted and documented — PLAN «Волна v5 §4»)
+            require(amount <= p.lossWrittenOff - p.lossRestored, "Exceeds written-off loss");
+            require(totalFunds > 0, "No investors");
+            m.collateral -= amount;
+            p.lossRestored += amount;
+            uint tf = totalFunds;
+            uint restored = 0;
+            for (uint i = 0; i < investorAddresses.length; i++) {
+                address inv = investorAddresses[i];
+                _accrue(inv);
+                uint add = investors[inv].fundsInvested * amount / tf;
+                investors[inv].fundsInvested += add;
+                restored += add;
+                emit Transfer(address(0), inv, add);
+            }
+            // mirror of the write-off: totalFunds tracks Σ fundsInvested
+            // exactly; truncation dust stays in the contract as surplus
+            totalFunds += restored;
+            freeFunds += restored;
         }
         emit CollateralSlashed(manager, proposalId, amount, reason);
     }
@@ -565,8 +647,11 @@ contract SheikhFi {
     }
 
     /// @dev AAOIFI SS 17 5/2/16 — Musharakah certificates are tradable after
-    /// commencement of activity; the pool stays permissioned (investors only).
+    /// commencement of activity; before it (SS 17 5/2/1) the pool is pure
+    /// money and transfers would fall under sarf rules the token cannot
+    /// honour. The pool stays permissioned (investors only).
     function _transferShares(address from, address to, uint amount) internal {
+        require(activityCommenced, "Activity not commenced");
         require(isInvestor(from) && isInvestor(to), "Not investor");
         // crystallise both sides at their pre-transfer shares first
         _accrue(from);

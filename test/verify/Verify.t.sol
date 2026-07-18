@@ -26,9 +26,12 @@ import {SheikhFi} from "../../contracts/SheikhFi.sol";
 ///                       (AAOIFI SS 12 3/1/5/7 — profit is added, never clawed back)
 ///   I6 Loss pro-rata  — a write-off preserves relative shares
 ///                       (AAOIFI SS 12 3/1/5/4 — loss strictly follows capital)
+///   v5 §1 Netting     — a write-off nets undistributed revenue into the
+///                       shortfall, fee-free (AAOIFI SS 40 3/2/1, SS 13 8/7)
 interface Vm {
     function prank(address) external;
     function deal(address, uint256) external;
+    function warp(uint256) external;
 }
 
 contract VerifyTest {
@@ -39,6 +42,7 @@ contract VerifyTest {
     address internal constant ALICE = address(0xA11CE); // investor, 95% profit share
     address internal constant BOB = address(0xB0B); // investor, 80%
     address internal constant CAROL = address(0xCA401); // manager
+    address internal constant BOARD = address(0xB0A7D); // sharia board (v5 §5: != owner)
 
     // owner (this contract) 40 + alice 40 + bob 20 = 100
     uint256 internal constant OWNER_STAKE = 40 ether;
@@ -54,6 +58,7 @@ contract VerifyTest {
         bank.addInvestor(ALICE, "Alice", 95);
         bank.addInvestor(BOB, "Bob", 80);
         bank.addManager(CAROL, "Carol", 20);
+        bank.setBoard(BOARD); // certification requires board != owner (v5 §5)
 
         vm.deal(address(this), 1000 ether);
         vm.deal(ALICE, 1000 ether);
@@ -78,7 +83,8 @@ contract VerifyTest {
     function _securedProject() internal {
         vm.prank(CAROL);
         bank.submitProposal("Project", PROJECT, "docs", 1);
-        bank.certifyProposal(0); // deployer is also the board
+        vm.prank(BOARD);
+        bank.certifyProposal(0); // v5 §5: only a separated board certifies
         // owner 40% then alice 40% = 80% of shares >= 60% threshold -> secured
         bank.approveProposal(0);
         vm.prank(ALICE);
@@ -88,9 +94,11 @@ contract VerifyTest {
     // ------------------------------------------------------------------ I2
 
     /// I2 — a share transfer moves stake between partners and creates none:
-    /// the books and the token supply stay equal for ANY amount.
+    /// the books and the token supply stay equal for ANY amount. Activity has
+    /// commenced (v5 §3, SS 17 5/2/1) — before it every transfer reverts.
     /// AAOIFI SS 17 3/6, 5/2/16 (certificates tradable, pool permissioned).
     function check_I2_transferPreservesBook(uint256 amount) public {
+        _securedProject(); // commences activity, opening share transfers
         uint256 supplyBefore = bank.totalSupply();
         vm.prank(ALICE);
         bank.transfer(BOB, amount); // reverting paths are pruned by Halmos
@@ -98,9 +106,12 @@ contract VerifyTest {
         assert(_book() == bank.totalSupply()); // books still mirror the token
     }
 
-    /// I2 — an exit burns exactly what it pays out, for ANY amount.
-    /// AAOIFI SS 12 3/1/6/1 (withdrawal leaves the others' shares intact).
+    /// I2 — an exit burns exactly what it pays out, for ANY amount, after the
+    /// due notice SS 12 3/1/6/1 requires (v5 §2).
     function check_I2_exitPreservesBook(uint256 amount) public {
+        vm.prank(ALICE);
+        bank.noticeExit();
+        vm.warp(block.timestamp + 48 hours + 1);
         uint256 othersBefore = bank.balanceOf(address(this)) + bank.balanceOf(BOB);
         vm.prank(ALICE);
         bank.exit(amount);
@@ -181,5 +192,41 @@ contract VerifyTest {
         // more than the loss it suffered
         assert(bank.totalFunds() >= tfBefore - loss);
         assert(bank.totalFunds() <= tfBefore);
+    }
+
+    // ------------------------------------------------------------------ v5 §1
+
+    /// Write-off nets undistributed revenue into the shortfall FIRST — for
+    /// ANY revenue amount the contract will accept. The netted part is
+    /// capital recovery: the manager's fee and the owner's cut never touch
+    /// it, and the booked loss shrinks by exactly the netted amount.
+    /// AAOIFI SS 40 3/2/1 (loss covered from the operation's own proceeds),
+    /// SS 13 8/7 (no Mudarib share of a loss-making operation).
+    /// `revenue` is uint64 for the same solver-honest reason as `repaid` in
+    /// check_I6: receiveRevenue of more than the pool ever handles is
+    /// unreachable, and 64-bit division keeps the proof tractable.
+    function check_writeOffNetsRevenue(uint64 revenue) public {
+        _securedProject();
+        vm.deal(CAROL, revenue);
+        vm.prank(CAROL);
+        bank.receiveRevenue{value: revenue}(0, revenue); // reverts if 0 — pruned
+
+        uint256 tfBefore = bank.totalFunds();
+        uint256 freeBefore = bank.freeFunds();
+        uint256 mgrBefore = bank.withdrawable(CAROL);
+        uint256 ownerBefore = bank.withdrawable(address(this));
+
+        bank.writeOffProposal(0);
+
+        uint256 toward = revenue >= PROJECT ? PROJECT : revenue;
+        uint256 loss = PROJECT - toward;
+        // the netted revenue came home as capital, not as anyone's profit
+        assert(bank.withdrawable(CAROL) == mgrBefore); // no manager fee
+        assert(bank.withdrawable(address(this)) == ownerBefore); // no owner cut
+        assert(bank.freeFunds() == freeBefore + toward);
+        // the loss booked against the partners is the NET shortfall only
+        assert(bank.totalFunds() >= tfBefore - loss);
+        assert(bank.totalFunds() <= tfBefore);
+        assert(_book() == bank.totalSupply());
     }
 }

@@ -16,7 +16,15 @@ async function deployWithParticipants() {
   const f = await deployFixture();
   await f.bank.connect(f.ali).addInvestor(f.bob.address, "Bob", 95);
   await f.bank.connect(f.ali).addManager(f.charlie.address, "Charlie", 20);
+  // v5 §5: certification requires the board to be separate from the owner
+  await f.bank.connect(f.ali).setBoard(f.dave.address);
   return f;
+}
+
+// v5 §2: exits require due notice; helper arms it and lets it elapse
+async function afterNotice(bank, signer) {
+  await bank.connect(signer).noticeExit();
+  await time.increase(48 * 3600 + 1);
 }
 
 async function deployWithDeposits() {
@@ -29,7 +37,7 @@ async function deployWithDeposits() {
 async function deployWithProposal() {
   const f = await deployWithDeposits();
   await f.bank.connect(f.charlie).submitProposal("Invest in project", ethers.parseEther("10"), "", 1);
-  await f.bank.connect(f.ali).certifyProposal(0);
+  await f.bank.connect(f.dave).certifyProposal(0);
   return f;
 }
 
@@ -61,14 +69,14 @@ describe("SheikhFi", function () {
 
   describe("Happy path (full lifecycle)", function () {
     it("deployment sets owner and initialises owner as investor", async function () {
-      const { bank, ali } = await deployFixture();
+      const { bank, ali, dave } = await deployFixture();
       expect(await bank.owner()).to.equal(ali.address);
       expect(await bank.ownerNickname()).to.equal("Ali");
       expect(await bank.isInvestor(ali.address)).to.be.true;
     });
 
     it("withdrawable balances credited after distribution", async function () {
-      const { bank, ali, bob, charlie, revenue } = await deployWithDistribution();
+      const { bank, ali, bob, charlie, revenue, dave } = await deployWithDistribution();
       // investor revenue is lazily accrued — must settle before reading withdrawable
       await bank.settle(ali.address);
       await bank.settle(bob.address);
@@ -88,7 +96,7 @@ describe("SheikhFi", function () {
     });
 
     it("withdraw transfers correct ETH to each participant", async function () {
-      const { bank, ali, bob, charlie } = await deployWithDistribution();
+      const { bank, ali, bob, charlie, dave } = await deployWithDistribution();
       await bank.settle(ali.address);
       await bank.settle(bob.address);
       const charlieW = await bank.withdrawable(charlie.address);
@@ -100,7 +108,7 @@ describe("SheikhFi", function () {
     });
 
     it("withdrawable is zeroed after withdrawal", async function () {
-      const { bank, ali, bob, charlie } = await deployWithDistribution();
+      const { bank, ali, bob, charlie, dave } = await deployWithDistribution();
       // settle first so withdraw() _accrue is a no-op and causes no late credits
       await bank.settle(ali.address);
       await bank.settle(bob.address);
@@ -113,7 +121,7 @@ describe("SheikhFi", function () {
     });
 
     it("profit accounting fields match withdrawable amounts", async function () {
-      const { bank, ali, bob, charlie, revenue } = await deployWithDistribution();
+      const { bank, ali, bob, charlie, revenue, dave } = await deployWithDistribution();
       await bank.settle(ali.address);
       await bank.settle(bob.address);
       const aliProfit     = (await bank.investors(ali.address)).profit;
@@ -128,13 +136,13 @@ describe("SheikhFi", function () {
 
   describe("Access control", function () {
     it("addInvestor reverts for non-owner", async function () {
-      const { bank, bob, charlie } = await deployFixture();
+      const { bank, bob, charlie, dave } = await deployFixture();
       await expect(bank.connect(bob).addInvestor(charlie.address, "Charlie", 50))
         .to.be.revertedWith("Not owner");
     });
 
     it("addManager reverts for non-owner", async function () {
-      const { bank, bob, charlie } = await deployFixture();
+      const { bank, bob, charlie, dave } = await deployFixture();
       await expect(bank.connect(bob).addManager(charlie.address, "Charlie", 20))
         .to.be.revertedWith("Not owner");
     });
@@ -146,7 +154,7 @@ describe("SheikhFi", function () {
     });
 
     it("submitProposal reverts for non-manager", async function () {
-      const { bank, bob } = await deployWithDeposits();
+      const { bank, bob, dave } = await deployWithDeposits();
       await expect(bank.connect(bob).submitProposal("Bad", ethers.parseEther("1"), "", 1))
         .to.be.revertedWith("Not manager");
     });
@@ -158,13 +166,13 @@ describe("SheikhFi", function () {
     });
 
     it("distributeRevenue reverts for non-owner", async function () {
-      const { bank, bob } = await deployWithRevenue();
+      const { bank, bob, dave } = await deployWithRevenue();
       await expect(bank.connect(bob).distributeRevenue(0))
         .to.be.revertedWith("Not owner");
     });
 
     it("receiveRevenue reverts for non-manager", async function () {
-      const { bank, ali } = await deployWithFundedProposal();
+      const { bank, ali, dave } = await deployWithFundedProposal();
       await expect(bank.connect(ali).receiveRevenue(0, ethers.parseEther("1"), { value: ethers.parseEther("1") }))
         .to.be.revertedWith("Not proposal manager");
     });
@@ -172,7 +180,7 @@ describe("SheikhFi", function () {
 
   describe("Input validation", function () {
     it("addInvestor: reverts for zero address", async function () {
-      const { bank, ali } = await deployFixture();
+      const { bank, ali, dave } = await deployFixture();
       await expect(bank.connect(ali).addInvestor(ethers.ZeroAddress, "Zero", 50))
         .to.be.revertedWith("Zero address");
     });
@@ -190,13 +198,13 @@ describe("SheikhFi", function () {
     });
 
     it("addInvestor: reverts when already investor", async function () {
-      const { bank, ali, bob } = await deployWithParticipants();
+      const { bank, ali, bob, dave } = await deployWithParticipants();
       await expect(bank.connect(ali).addInvestor(bob.address, "Bob2", 50))
         .to.be.revertedWith("Already investor");
     });
 
     it("addManager: reverts for zero address", async function () {
-      const { bank, ali } = await deployFixture();
+      const { bank, ali, dave } = await deployFixture();
       await expect(bank.connect(ali).addManager(ethers.ZeroAddress, "Zero", 10))
         .to.be.revertedWith("Zero address");
     });
@@ -214,31 +222,31 @@ describe("SheikhFi", function () {
     });
 
     it("addManager: reverts when already manager", async function () {
-      const { bank, ali, charlie } = await deployWithParticipants();
+      const { bank, ali, charlie, dave } = await deployWithParticipants();
       await expect(bank.connect(ali).addManager(charlie.address, "Charlie2", 10))
         .to.be.revertedWith("Already manager");
     });
 
     it("depositFunds: reverts when msg.value is 0", async function () {
-      const { bank, ali } = await deployFixture();
+      const { bank, ali, dave } = await deployFixture();
       await expect(bank.connect(ali).depositFunds(0, { value: 0 }))
         .to.be.revertedWith("No value");
     });
 
     it("submitProposal: reverts for empty description", async function () {
-      const { bank, charlie } = await deployWithDeposits();
+      const { bank, charlie, dave } = await deployWithDeposits();
       await expect(bank.connect(charlie).submitProposal("", ethers.parseEther("1"), "", 1))
         .to.be.revertedWith("Empty description");
     });
 
     it("submitProposal: reverts when requiredFunds exceeds freeFunds", async function () {
-      const { bank, charlie } = await deployWithDeposits();
+      const { bank, charlie, dave } = await deployWithDeposits();
       await expect(bank.connect(charlie).submitProposal("Too big", ethers.parseEther("31"), "", 1))
         .to.be.revertedWith("Insufficient funds");
     });
 
     it("receiveRevenue: reverts when msg.value is 0", async function () {
-      const { bank, charlie } = await deployWithFundedProposal();
+      const { bank, charlie, dave } = await deployWithFundedProposal();
       await expect(bank.connect(charlie).receiveRevenue(0, 0, { value: 0 }))
         .to.be.revertedWith("No value");
     });
@@ -246,14 +254,14 @@ describe("SheikhFi", function () {
 
   describe("approveProposal", function () {
     it("does not fund below threshold", async function () {
-      const { bank, ali } = await deployWithProposal();
+      const { bank, ali, dave } = await deployWithProposal();
       // Ali has 10/30 = 33% < 60% threshold
       await bank.connect(ali).approveProposal(0);
       expect((await bank.proposals(0)).secured).to.be.false;
     });
 
     it("funds when threshold is reached", async function () {
-      const { bank, bob } = await deployWithProposal();
+      const { bank, bob, dave } = await deployWithProposal();
       // Bob has 20/30 = 66.7% > 60%
       await bank.connect(bob).approveProposal(0);
       expect((await bank.proposals(0)).secured).to.be.true;
@@ -262,16 +270,17 @@ describe("SheikhFi", function () {
     it("reverts with No investors when the pool is empty (no division by zero)", async function () {
       // Zero-fund proposal on an empty pool: the vote must revert cleanly,
       // not panic on approveShare * 100 / totalFunds.
-      const { bank, ali, charlie } = await deployFixture();
+      const { bank, ali, charlie, dave } = await deployFixture();
       await bank.connect(ali).addManager(charlie.address, "Charlie", 0);
+      await bank.connect(ali).setBoard(dave.address);
       await bank.connect(charlie).submitProposal("Zero-fund test", 0, "", 1);
-      await bank.connect(ali).certifyProposal(0);
+      await bank.connect(dave).certifyProposal(0);
       await expect(bank.connect(ali).approveProposal(0))
         .to.be.revertedWith("No investors");
     });
 
     it("emits ProposalApproved with the running approve share", async function () {
-      const { bank, ali } = await deployWithProposal();
+      const { bank, ali, dave } = await deployWithProposal();
       // Ali has 10 ETH of 30 total
       await expect(bank.connect(ali).approveProposal(0))
         .to.emit(bank, "ProposalApproved")
@@ -279,34 +288,34 @@ describe("SheikhFi", function () {
     });
 
     it("rejects double-vote", async function () {
-      const { bank, ali } = await deployWithProposal();
+      const { bank, ali, dave } = await deployWithProposal();
       await bank.connect(ali).approveProposal(0);
       await expect(bank.connect(ali).approveProposal(0))
         .to.be.revertedWith("Already voted");
     });
 
     it("rejects vote on already-funded proposal", async function () {
-      const { bank, ali, bob } = await deployWithProposal();
+      const { bank, ali, bob, dave } = await deployWithProposal();
       await bank.connect(bob).approveProposal(0);
       await expect(bank.connect(ali).approveProposal(0))
         .to.be.revertedWith("Already funded");
     });
 
     it("emits ProposalFunded with correct args when funded", async function () {
-      const { bank, bob, charlie } = await deployWithProposal();
+      const { bank, bob, charlie, dave } = await deployWithProposal();
       await expect(bank.connect(bob).approveProposal(0))
         .to.emit(bank, "ProposalFunded")
         .withArgs(0, charlie.address, ethers.parseEther("10"));
     });
 
     it("credits manager withdrawable on funding", async function () {
-      const { bank, bob, charlie } = await deployWithProposal();
+      const { bank, bob, charlie, dave } = await deployWithProposal();
       await bank.connect(bob).approveProposal(0);
       expect(await bank.withdrawable(charlie.address)).to.equal(ethers.parseEther("10"));
     });
 
     it("decrements freeFunds on funding", async function () {
-      const { bank, bob } = await deployWithProposal();
+      const { bank, bob, dave } = await deployWithProposal();
       const freeBefore = await bank.freeFunds();
       await bank.connect(bob).approveProposal(0);
       expect(await bank.freeFunds()).to.equal(freeBefore - ethers.parseEther("10"));
@@ -315,7 +324,7 @@ describe("SheikhFi", function () {
 
   describe("distributeRevenue — pull payments & dust sweep", function () {
     it("BadReceiver investor does not block distribution", async function () {
-      const { bank, ali, bob, charlie } = await deployWithDeposits();
+      const { bank, ali, bob, charlie, dave } = await deployWithDeposits();
 
       const BadReceiver = await ethers.getContractFactory("BadReceiver");
       const bad = await BadReceiver.deploy();
@@ -325,7 +334,7 @@ describe("SheikhFi", function () {
       await bad.deposit(await bank.getAddress(), { value: ethers.parseEther("5") });
 
       await bank.connect(charlie).submitProposal("Test", ethers.parseEther("5"), "", 1);
-      await bank.connect(ali).certifyProposal(0);
+      await bank.connect(dave).certifyProposal(0);
       // bob 20 + ali 10 of 35 total = 85.7% ≥ 60% threshold
       await bank.connect(bob).approveProposal(0);
       await bank.connect(ali).approveProposal(0);
@@ -357,8 +366,9 @@ describe("SheikhFi", function () {
       await bank.connect(bob).depositFunds(ethers.parseEther("1"), { value: ethers.parseEther("1") });
       await bank.connect(dave).depositFunds(ethers.parseEther("1"), { value: ethers.parseEther("1") });
 
+      await bank.connect(ali).setBoard(charlie.address);
       await bank.connect(charlie).submitProposal("Test", ethers.parseEther("1"), "", 1);
-      await bank.connect(ali).certifyProposal(0);
+      await bank.connect(charlie).certifyProposal(0);
       await bank.connect(ali).approveProposal(0);
       await bank.connect(bob).approveProposal(0);
       await bank.connect(charlie).receiveRevenue(0, ethers.parseEther("1"), { value: ethers.parseEther("1") });
@@ -380,20 +390,20 @@ describe("SheikhFi", function () {
     });
 
     it("second distribute on same proposal reverts (CEI guard)", async function () {
-      const { bank, ali } = await deployWithRevenue();
+      const { bank, ali, dave } = await deployWithRevenue();
       await bank.connect(ali).distributeRevenue(0);
       await expect(bank.connect(ali).distributeRevenue(0))
         .to.be.revertedWith("No revenue");
     });
 
     it("reverts with No revenue when nothing new to distribute", async function () {
-      const { bank, ali } = await deployWithFundedProposal();
+      const { bank, ali, dave } = await deployWithFundedProposal();
       await expect(bank.connect(ali).distributeRevenue(0))
         .to.be.revertedWith("No revenue");
     });
 
     it("receiveRevenue reverts on a proposal that is not secured", async function () {
-      const { bank, charlie } = await deployWithProposal();
+      const { bank, charlie, dave } = await deployWithProposal();
       await expect(bank.connect(charlie).receiveRevenue(0, ethers.parseEther("1"), { value: ethers.parseEther("1") }))
         .to.be.revertedWith("Not secured");
     });
@@ -407,7 +417,7 @@ describe("SheikhFi", function () {
     });
 
     it("emits Withdrawn event with correct args", async function () {
-      const { bank, charlie } = await deployWithFundedProposal();
+      const { bank, charlie, dave } = await deployWithFundedProposal();
       const amount = await bank.withdrawable(charlie.address);
       await expect(bank.connect(charlie).withdraw())
         .to.emit(bank, "Withdrawn")
@@ -415,13 +425,13 @@ describe("SheikhFi", function () {
     });
 
     it("zeroes the balance before transferring (re-entry guard)", async function () {
-      const { bank, charlie } = await deployWithFundedProposal();
+      const { bank, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).withdraw();
       expect(await bank.withdrawable(charlie.address)).to.equal(0n);
     });
 
     it("second withdraw reverts immediately after first", async function () {
-      const { bank, charlie } = await deployWithFundedProposal();
+      const { bank, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).withdraw();
       await expect(bank.connect(charlie).withdraw())
         .to.be.revertedWith("Nothing to withdraw");
@@ -444,7 +454,7 @@ describe("SheikhFi", function () {
     });
 
     it("depositFunds emits FundsDeposited", async function () {
-      const { bank, ali } = await deployFixture();
+      const { bank, ali, dave } = await deployFixture();
       const amount = ethers.parseEther("5");
       await expect(bank.connect(ali).depositFunds(amount, { value: amount }))
         .to.emit(bank, "FundsDeposited")
@@ -452,7 +462,7 @@ describe("SheikhFi", function () {
     });
 
     it("submitProposal emits ProposalSubmitted", async function () {
-      const { bank, charlie } = await deployWithDeposits();
+      const { bank, charlie, dave } = await deployWithDeposits();
       const req = ethers.parseEther("5");
       await expect(bank.connect(charlie).submitProposal("TestProp", req, "", 1))
         .to.emit(bank, "ProposalSubmitted")
@@ -460,7 +470,7 @@ describe("SheikhFi", function () {
     });
 
     it("receiveRevenue emits RevenueReceived", async function () {
-      const { bank, charlie } = await deployWithFundedProposal();
+      const { bank, charlie, dave } = await deployWithFundedProposal();
       const amount = ethers.parseEther("10");
       await expect(bank.connect(charlie).receiveRevenue(0, amount, { value: amount }))
         .to.emit(bank, "RevenueReceived")
@@ -468,7 +478,7 @@ describe("SheikhFi", function () {
     });
 
     it("distributeRevenue emits RevenueDistributed", async function () {
-      const { bank, ali, revenue } = await deployWithRevenue();
+      const { bank, ali, revenue, dave } = await deployWithRevenue();
       await expect(bank.connect(ali).distributeRevenue(0))
         .to.emit(bank, "RevenueDistributed")
         .withArgs(0, revenue);
@@ -483,13 +493,15 @@ describe("SheikhFi", function () {
       await bank.waitForDeployment();
       const ali = signers[0];
       const charlie = signers[1];
+      const dave = signers[19];
 
       await bank.connect(ali).addManager(charlie.address, "Charlie", 0);
+      await bank.connect(ali).setBoard(dave.address);
       await bank.connect(ali).depositFunds(ethers.parseEther("10"), { value: ethers.parseEther("10") });
 
       // Warmup: initialize cumulativePerShare so both measurements start from nonzero state
       await bank.connect(charlie).submitProposal("Warmup", ethers.parseEther("1"), "", 1);
-      await bank.connect(ali).certifyProposal(0);
+      await bank.connect(dave).certifyProposal(0);
       await bank.connect(ali).approveProposal(0);
       await bank.connect(charlie).receiveRevenue(0, ethers.parseEther("2"), { value: ethers.parseEther("2") });
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("1"), { value: ethers.parseEther("1") });
@@ -497,7 +509,7 @@ describe("SheikhFi", function () {
 
       // Measure gas with 1 investor
       await bank.connect(charlie).submitProposal("A", ethers.parseEther("1"), "", 1);
-      await bank.connect(ali).certifyProposal(1);
+      await bank.connect(dave).certifyProposal(1);
       await bank.connect(ali).approveProposal(1);
       await bank.connect(charlie).receiveRevenue(1, ethers.parseEther("5"), { value: ethers.parseEther("5") });
       await bank.connect(charlie).returnPrincipal(1, ethers.parseEther("1"), { value: ethers.parseEther("1") });
@@ -512,7 +524,7 @@ describe("SheikhFi", function () {
 
       // Measure gas with 18 investors
       await bank.connect(charlie).submitProposal("B", ethers.parseEther("1"), "", 1);
-      await bank.connect(ali).certifyProposal(2);
+      await bank.connect(dave).certifyProposal(2);
       await bank.connect(ali).approveProposal(2);
       await bank.connect(charlie).receiveRevenue(2, ethers.parseEther("5"), { value: ethers.parseEther("5") });
       await bank.connect(charlie).returnPrincipal(2, ethers.parseEther("1"), { value: ethers.parseEther("1") });
@@ -535,7 +547,7 @@ describe("SheikhFi", function () {
     });
 
     it("withdraw triggers accrue automatically", async function () {
-      const { bank, ali } = await deployWithDistribution();
+      const { bank, ali, dave } = await deployWithDistribution();
       // Ali has never called settle — withdraw() should auto-accrue
       await expect(bank.connect(ali).withdraw()).to.not.be.reverted;
       expect((await bank.investors(ali.address)).profit).to.be.gt(0n);
@@ -543,7 +555,7 @@ describe("SheikhFi", function () {
     });
 
     it("multiple distributions accumulate correctly", async function () {
-      const { bank, ali, bob, charlie } = await deployWithFundedProposal();
+      const { bank, ali, bob, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("10"), { value: ethers.parseEther("10") });
 
       const rev1 = ethers.parseEther("20");
@@ -565,7 +577,7 @@ describe("SheikhFi", function () {
     });
 
     it("personalized profit rates respected", async function () {
-      const [ali, bob, charlie] = await ethers.getSigners();
+      const [ali, bob, charlie, dave] = await ethers.getSigners();
       const SheikhFi = await ethers.getContractFactory("SheikhFi");
       const bank = await SheikhFi.deploy("Ali", 60, ethers.ZeroAddress);
       await bank.waitForDeployment();
@@ -573,12 +585,13 @@ describe("SheikhFi", function () {
       // Two investors with equal shares but different rates
       await bank.connect(ali).addInvestor(bob.address, "Bob", 80);
       await bank.connect(ali).addManager(charlie.address, "Charlie", 0);
+      await bank.connect(ali).setBoard(dave.address);
 
       await bank.connect(ali).depositFunds(ethers.parseEther("10"), { value: ethers.parseEther("10") });
       await bank.connect(bob).depositFunds(ethers.parseEther("10"), { value: ethers.parseEther("10") });
 
       await bank.connect(charlie).submitProposal("Test", ethers.parseEther("1"), "", 1);
-      await bank.connect(ali).certifyProposal(0);
+      await bank.connect(dave).certifyProposal(0);
       // bob 10 + ali 10 of 20 total = 100% ≥ 60% threshold
       await bank.connect(bob).approveProposal(0);
       await bank.connect(ali).approveProposal(0);
@@ -603,7 +616,7 @@ describe("SheikhFi", function () {
     });
 
     it("settle is idempotent", async function () {
-      const { bank, bob } = await deployWithDistribution();
+      const { bank, bob, dave } = await deployWithDistribution();
       await bank.settle(bob.address);
       const w1 = await bank.withdrawable(bob.address);
       const p1 = (await bank.investors(bob.address)).profit;
@@ -630,7 +643,7 @@ describe("SheikhFi", function () {
     });
 
     it("pendingAccrual reports uncrystallised share before settle", async function () {
-      const { bank, bob } = await deployWithDistribution();
+      const { bank, bob, dave } = await deployWithDistribution();
       const [myPending, ownerPending] = await bank.pendingAccrual(bob.address);
       // Bob has 20/30 share, 95% rate — both values should be non-zero
       expect(myPending).to.be.gt(0n);
@@ -651,7 +664,7 @@ describe("SheikhFi", function () {
     });
 
     it("second deposit accrues investor at pre-deposit share", async function () {
-      const { bank, ali, charlie } = await deployWithFundedProposal();
+      const { bank, ali, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("10"), { value: ethers.parseEther("10") });
 
       // First distribution: ali has 10 ETH, bob has 20 ETH (total 30)
@@ -681,7 +694,7 @@ describe("SheikhFi", function () {
     });
 
     it("settleBatch settles multiple investors in one call", async function () {
-      const { bank, ali, bob } = await deployWithDistribution();
+      const { bank, ali, bob, dave } = await deployWithDistribution();
       await bank.settleBatch([ali.address, bob.address]);
       expect(await bank.withdrawable(ali.address)).to.be.gt(0n);
       expect(await bank.withdrawable(bob.address)).to.be.gt(0n);
@@ -705,7 +718,7 @@ describe("SheikhFi", function () {
 
   describe("Economy v2 (PLAN §4)", function () {
     it("returnPrincipal restores freeFunds fee-free", async function () {
-      const { bank, charlie } = await deployWithFundedProposal();
+      const { bank, charlie, dave } = await deployWithFundedProposal();
       const freeBefore = await bank.freeFunds();          // 20 ETH
       const charlieW   = await bank.withdrawable(charlie.address); // 10 ETH funding
       await expect(bank.connect(charlie).returnPrincipal(0, ethers.parseEther("4"), { value: ethers.parseEther("4") }))
@@ -732,7 +745,7 @@ describe("SheikhFi", function () {
     });
 
     it("profit is not recognised until the capital is home (SS 13 8/7)", async function () {
-      const { bank, ali, charlie } = await deployWithFundedProposal();
+      const { bank, ali, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).receiveRevenue(0, ethers.parseEther("50"), { value: ethers.parseEther("50") });
       await expect(bank.connect(ali).distributeRevenue(0))
         .to.be.revertedWith("Principal outstanding");
@@ -744,7 +757,7 @@ describe("SheikhFi", function () {
     });
 
     it("write-off reduces stakes pro-rata and keeps totalFunds == Σ stakes (SS 12 3/1/5/4)", async function () {
-      const { bank, ali, bob, charlie } = await deployWithFundedProposal();
+      const { bank, ali, bob, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("4"), { value: ethers.parseEther("4") });
       const freeBefore = await bank.freeFunds(); // 24 ETH of realised cash
       await expect(bank.connect(ali).writeOffProposal(0))
@@ -762,13 +775,13 @@ describe("SheikhFi", function () {
     });
 
     it("write-off crystallises profit at pre-loss stakes", async function () {
-      const { bank, ali, bob, charlie } = await deployWithFundedProposal();
+      const { bank, ali, bob, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("10"), { value: ethers.parseEther("10") });
       await bank.connect(charlie).receiveRevenue(0, ethers.parseEther("30"), { value: ethers.parseEther("30") });
       await bank.connect(ali).distributeRevenue(0);
       // nobody settles; fund a second project and write it off
       await bank.connect(charlie).submitProposal("Fails", ethers.parseEther("10"), "", 1);
-      await bank.connect(ali).certifyProposal(1);
+      await bank.connect(dave).certifyProposal(1);
       await bank.connect(bob).approveProposal(1);
       await bank.connect(ali).writeOffProposal(1);
       // bob's profit from the first project was crystallised inside the
@@ -783,7 +796,7 @@ describe("SheikhFi", function () {
     });
 
     it("write-off closes the proposal; earlier revenue stays distributable", async function () {
-      const { bank, ali, charlie } = await deployWithFundedProposal();
+      const { bank, ali, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).receiveRevenue(0, ethers.parseEther("15"), { value: ethers.parseEther("15") });
       await bank.connect(ali).writeOffProposal(0);
       await expect(bank.connect(charlie).receiveRevenue(0, 1n, { value: 1n }))
@@ -813,7 +826,8 @@ describe("SheikhFi", function () {
     });
 
     it("exit pays out of free funds and shrinks the stake", async function () {
-      const { bank, bob } = await deployWithDeposits();
+      const { bank, bob, dave } = await deployWithDeposits();
+      await afterNotice(bank, bob);
       await expect(bank.connect(bob).exit(ethers.parseEther("5")))
         .to.emit(bank, "Exited").withArgs(bob.address, ethers.parseEther("5"));
       expect((await bank.investors(bob.address)).fundsInvested).to.equal(ethers.parseEther("15"));
@@ -832,12 +846,15 @@ describe("SheikhFi", function () {
       const { bank, ali, bob, charlie, dave } = await deployWithDeposits();
       await expect(bank.connect(dave).exit(1n)).to.be.revertedWith("Not investor");
       await expect(bank.connect(bob).exit(0)).to.be.revertedWith("No value");
+      // v5 §2: due notice (SS 12 3/1/6/1) gates every exit
+      await expect(bank.connect(bob).exit(1n)).to.be.revertedWith("Notice not elapsed");
+      await afterNotice(bank, bob);
       await expect(bank.connect(bob).exit(ethers.parseEther("21")))
         .to.be.revertedWith("Exceeds stake");
       // deploy most of the pool, then the stake exceeds what is liquid
       // (bob alone: 20/30 = 66.7% ≥ 60% — funds on the first vote)
       await bank.connect(charlie).submitProposal("Big", ethers.parseEther("25"), "", 1);
-      await bank.connect(ali).certifyProposal(0);
+      await bank.connect(dave).certifyProposal(0);
       await bank.connect(bob).approveProposal(0);
       expect(await bank.freeFunds()).to.equal(ethers.parseEther("5"));
       await expect(bank.connect(bob).exit(ethers.parseEther("10")))
@@ -845,7 +862,8 @@ describe("SheikhFi", function () {
     });
 
     it("exited stake earns nothing from later distributions", async function () {
-      const { bank, ali, bob, charlie } = await deployWithDistribution();
+      const { bank, ali, bob, charlie, dave } = await deployWithDistribution();
+      await afterNotice(bank, bob);
       await bank.connect(bob).exit(ethers.parseEther("20"));
       // exit crystallised bob's accrual first: investor rev 40 * 20/30 * 95%
       const accrued = ethers.parseEther("40") * 20n * 95n / (30n * 100n);
@@ -860,13 +878,15 @@ describe("SheikhFi", function () {
     });
 
     it("distribute reverts cleanly when every stake has exited", async function () {
-      const { bank, ali, charlie } = await deployFixture();
+      const { bank, ali, charlie, dave } = await deployFixture();
       await bank.connect(ali).addManager(charlie.address, "Charlie", 20);
+      await bank.connect(ali).setBoard(dave.address);
       await bank.connect(ali).depositFunds(ethers.parseEther("10"), { value: ethers.parseEther("10") });
       await bank.connect(charlie).submitProposal("Solo", ethers.parseEther("5"), "", 1);
-      await bank.connect(ali).certifyProposal(0);
+      await bank.connect(dave).certifyProposal(0);
       await bank.connect(ali).approveProposal(0);
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("5"), { value: ethers.parseEther("5") });
+      await afterNotice(bank, ali);
       await bank.connect(ali).exit(ethers.parseEther("10"));
       expect(await bank.totalFunds()).to.equal(0n);
       await bank.connect(charlie).receiveRevenue(0, ethers.parseEther("3"), { value: ethers.parseEther("3") });
@@ -877,7 +897,7 @@ describe("SheikhFi", function () {
 
   describe("Proposal lifecycle (PLAN §1)", function () {
     it("vote weight is frozen at vote time — later deposits do not inflate it", async function () {
-      const { bank, ali, bob } = await deployWithProposal();
+      const { bank, ali, bob, dave } = await deployWithProposal();
       // Ali votes with 10 of 30 ETH (33% < 60%)
       await bank.connect(ali).approveProposal(0);
       // Ali deposits 50 more — totalFunds 80, but his cast vote stays at 10
@@ -890,24 +910,24 @@ describe("SheikhFi", function () {
     });
 
     it("voting closes after the deadline", async function () {
-      const { bank, bob } = await deployWithProposal();
+      const { bank, bob, dave } = await deployWithProposal();
       await time.increase(30 * 24 * 3600 + 1);
       await expect(bank.connect(bob).approveProposal(0))
         .to.be.revertedWith("Voting closed");
     });
 
     it("deadline follows the configured votingPeriod", async function () {
-      const { bank, ali, charlie } = await deployWithDeposits();
+      const { bank, ali, charlie, dave } = await deployWithDeposits();
       await bank.connect(ali).setVotingPeriod(2 * 24 * 3600);
       await bank.connect(charlie).submitProposal("Short window", ethers.parseEther("1"), "", 1);
-      await bank.connect(ali).certifyProposal(0);
+      await bank.connect(dave).certifyProposal(0);
       await time.increase(2 * 24 * 3600 + 1);
       await expect(bank.connect(ali).approveProposal(0))
         .to.be.revertedWith("Voting closed");
     });
 
     it("manager cancels own pending proposal; votes on it revert", async function () {
-      const { bank, ali, charlie } = await deployWithProposal();
+      const { bank, ali, charlie, dave } = await deployWithProposal();
       await expect(bank.connect(charlie).cancelProposal(0))
         .to.emit(bank, "ProposalCancelled").withArgs(0);
       await expect(bank.connect(ali).approveProposal(0))
@@ -915,7 +935,7 @@ describe("SheikhFi", function () {
     });
 
     it("owner can cancel; strangers cannot; no double cancel", async function () {
-      const { bank, ali, bob } = await deployWithProposal();
+      const { bank, ali, bob, dave } = await deployWithProposal();
       await expect(bank.connect(bob).cancelProposal(0))
         .to.be.revertedWith("Not authorized");
       await bank.connect(ali).cancelProposal(0);
@@ -924,13 +944,13 @@ describe("SheikhFi", function () {
     });
 
     it("secured proposal cannot be cancelled", async function () {
-      const { bank, ali } = await deployWithFundedProposal();
+      const { bank, ali, dave } = await deployWithFundedProposal();
       await expect(bank.connect(ali).cancelProposal(0))
         .to.be.revertedWith("Already funded");
     });
 
     it("setters: owner-only, bounds enforced, events emitted", async function () {
-      const { bank, ali, bob } = await deployFixture();
+      const { bank, ali, bob, dave } = await deployFixture();
       await expect(bank.connect(bob).setApproveShareThreshold(50))
         .to.be.revertedWith("Not owner");
       await expect(bank.connect(bob).setVotingPeriod(7 * 24 * 3600))
@@ -1014,14 +1034,16 @@ describe("SheikhFi", function () {
       const bank = await SheikhFi.deploy("Ali", 100, ethers.ZeroAddress);
       await bank.waitForDeployment();
       const [ali, charlie] = [signers[0], signers[1]];
+      const dave = signers[19];
       await bank.connect(ali).addManager(charlie.address, "Charlie", 0);
+      await bank.connect(ali).setBoard(dave.address);
       await bank.connect(ali).depositFunds(ethers.parseEther("1"), { value: ethers.parseEther("1") });
       for (let i = 2; i < 19; i++) {
         await bank.connect(ali).addInvestor(signers[i].address, `Inv${i}`, 90);
         await bank.connect(signers[i]).depositFunds(ethers.parseEther("1"), { value: ethers.parseEther("1") });
       }
       await bank.connect(charlie).submitProposal("Gas probe", ethers.parseEther("1"), "", 1);
-      await bank.connect(ali).certifyProposal(0);
+      await bank.connect(dave).certifyProposal(0);
       const gasOf = async (signer) =>
         (await (await bank.connect(signer).approveProposal(0)).wait()).gasUsed;
       await gasOf(signers[2]); // warmup: first vote initialises approvalWeight
@@ -1035,7 +1057,7 @@ describe("SheikhFi", function () {
 
   describe("Tokenized shares (PLAN v3 §1)", function () {
     it("ERC-20 metadata and supply mirror the pool accounting", async function () {
-      const { bank, ali, bob } = await deployWithDeposits();
+      const { bank, ali, bob, dave } = await deployWithDeposits();
       expect(await bank.name()).to.equal("SheikhFi Musharaka Share");
       expect(await bank.symbol()).to.equal("SHFI");
       expect(await bank.decimals()).to.equal(18);
@@ -1045,7 +1067,7 @@ describe("SheikhFi", function () {
     });
 
     it("transfer moves stake and crystallises both sides first", async function () {
-      const { bank, ali, bob } = await deployWithDistribution();
+      const { bank, ali, bob, dave } = await deployWithDistribution();
       await expect(bank.connect(bob).transfer(ali.address, ethers.parseEther("10")))
         .to.emit(bank, "Transfer")
         .withArgs(bob.address, ali.address, ethers.parseEther("10"));
@@ -1062,17 +1084,23 @@ describe("SheikhFi", function () {
       expect(await bank.totalFunds()).to.equal(ethers.parseEther("30"));
     });
 
+    it("transfers blocked before commencement of activity (v5 §3)", async function () {
+      const { bank, ali, bob, dave } = await deployWithDeposits();
+      await expect(bank.connect(bob).transfer(ali.address, 1n))
+        .to.be.revertedWith("Activity not commenced");
+    });
+
     it("transfer to a non-investor reverts; over-stake reverts", async function () {
-      const { bank, bob, dave } = await deployWithDeposits();
+      const { bank, bob, dave } = await deployWithFundedProposal();
       await expect(bank.connect(bob).transfer(dave.address, 1n))
         .to.be.revertedWith("Not investor");
-      const { bank: b2, ali: a2, bob: bob2 } = await deployWithDeposits();
+      const { bank: b2, ali: a2, bob: bob2 } = await deployWithFundedProposal();
       await expect(b2.connect(bob2).transfer(a2.address, ethers.parseEther("21")))
         .to.be.revertedWith("Exceeds stake");
     });
 
     it("transferFrom respects allowance", async function () {
-      const { bank, ali, bob } = await deployWithDeposits();
+      const { bank, ali, bob, dave } = await deployWithFundedProposal();
       await bank.connect(bob).approve(ali.address, ethers.parseEther("5"));
       await expect(bank.connect(ali).transferFrom(bob.address, ali.address, ethers.parseEther("6")))
         .to.be.revertedWith("Exceeds allowance");
@@ -1082,9 +1110,10 @@ describe("SheikhFi", function () {
     });
 
     it("deposit mints and exit burns in ERC-20 terms", async function () {
-      const { bank, bob } = await deployWithDeposits();
+      const { bank, bob, dave } = await deployWithDeposits();
       await expect(bank.connect(bob).depositFunds(1000n, { value: 1000n }))
         .to.emit(bank, "Transfer").withArgs(ethers.ZeroAddress, bob.address, 1000n);
+      await afterNotice(bank, bob);
       await expect(bank.connect(bob).exit(500n))
         .to.emit(bank, "Transfer").withArgs(bob.address, ethers.ZeroAddress, 500n);
     });
@@ -1092,7 +1121,7 @@ describe("SheikhFi", function () {
 
   describe("Token denomination (PLAN v3 §2)", function () {
     async function deployTokenPool() {
-      const [ali, bob, charlie] = await ethers.getSigners();
+      const [ali, bob, charlie, , dave] = await ethers.getSigners();
       const Mock = await ethers.getContractFactory("MockERC20");
       const usd = await Mock.deploy();
       await usd.waitForDeployment();
@@ -1103,11 +1132,12 @@ describe("SheikhFi", function () {
       await bank.waitForDeployment();
       await bank.connect(ali).addInvestor(bob.address, "Bob", 95);
       await bank.connect(ali).addManager(charlie.address, "Charlie", 20);
-      return { bank, usd, ali, bob, charlie, M };
+      await bank.connect(ali).setBoard(dave.address);
+      return { bank, usd, ali, bob, charlie, dave, M };
     }
 
     it("full cycle settles in tokens", async function () {
-      const { bank, usd, ali, bob, charlie, M } = await deployTokenPool();
+      const { bank, usd, ali, bob, charlie, M, dave } = await deployTokenPool();
       const bankAddr = await bank.getAddress();
 
       await expect(bank.connect(ali).depositFunds(100n * M))
@@ -1119,7 +1149,7 @@ describe("SheikhFi", function () {
       expect(await usd.balanceOf(bankAddr)).to.equal(300n * M);
 
       await bank.connect(charlie).submitProposal("Sukuk pilot", 100n * M, "", 1);
-      await bank.connect(ali).certifyProposal(0);
+      await bank.connect(dave).certifyProposal(0);
       await bank.connect(bob).approveProposal(0);
       // manager pulls the funded tranche in tokens
       const before = await usd.balanceOf(charlie.address);
@@ -1140,7 +1170,7 @@ describe("SheikhFi", function () {
     });
 
     it("token mode refuses native value; native mode requires exact value", async function () {
-      const { bank, usd, ali, M } = await deployTokenPool();
+      const { bank, usd, ali, M, dave } = await deployTokenPool();
       await usd.connect(ali).approve(await bank.getAddress(), 10n * M);
       await expect(bank.connect(ali).depositFunds(10n * M, { value: 1n }))
         .to.be.revertedWith("Native not accepted");
@@ -1152,30 +1182,30 @@ describe("SheikhFi", function () {
 
   describe("Sharia board (PLAN v3 §3)", function () {
     it("voting opens only after certification", async function () {
-      const { bank, ali, charlie } = await deployWithDeposits();
+      const { bank, ali, charlie, dave } = await deployWithDeposits();
       await bank.connect(charlie).submitProposal("Uncertified", ethers.parseEther("1"), "ipfs-cid-demo", 1);
       await expect(bank.connect(ali).approveProposal(0))
         .to.be.revertedWith("Not certified");
       await expect(bank.connect(charlie).certifyProposal(0))
         .to.be.revertedWith("Not board");
-      await expect(bank.connect(ali).certifyProposal(0))
+      await expect(bank.connect(dave).certifyProposal(0))
         .to.emit(bank, "ProposalCertified").withArgs(0);
-      await expect(bank.connect(ali).certifyProposal(0))
+      await expect(bank.connect(dave).certifyProposal(0))
         .to.be.revertedWith("Already certified");
       await expect(bank.connect(ali).approveProposal(0)).to.not.be.reverted;
       expect((await bank.proposals(0)).docsHash).to.equal("ipfs-cid-demo");
     });
 
     it("cancelled proposal cannot be certified", async function () {
-      const { bank, ali, charlie } = await deployWithDeposits();
+      const { bank, ali, charlie, dave } = await deployWithDeposits();
       await bank.connect(charlie).submitProposal("Doomed", ethers.parseEther("1"), "", 1);
       await bank.connect(charlie).cancelProposal(0);
-      await expect(bank.connect(ali).certifyProposal(0))
+      await expect(bank.connect(dave).certifyProposal(0))
         .to.be.revertedWith("Cancelled");
     });
 
     it("setBoard: owner-only, non-zero, takes effect", async function () {
-      const { bank, ali, bob, charlie } = await deployWithDeposits();
+      const { bank, ali, bob, charlie, dave } = await deployWithDeposits();
       await expect(bank.connect(bob).setBoard(bob.address))
         .to.be.revertedWith("Not owner");
       await expect(bank.connect(ali).setBoard(ethers.ZeroAddress))
@@ -1183,7 +1213,7 @@ describe("SheikhFi", function () {
       await expect(bank.connect(ali).setBoard(bob.address))
         .to.emit(bank, "BoardChanged").withArgs(bob.address);
       await bank.connect(charlie).submitProposal("Post-handover", ethers.parseEther("1"), "", 1);
-      await expect(bank.connect(ali).certifyProposal(0))
+      await expect(bank.connect(dave).certifyProposal(0))
         .to.be.revertedWith("Not board");
       await expect(bank.connect(bob).certifyProposal(0)).to.not.be.reverted;
     });
@@ -1193,38 +1223,38 @@ describe("SheikhFi", function () {
     async function deployTranched() {
       const f = await deployWithDeposits(); // ali 10, bob 20
       await f.bank.connect(f.charlie).submitProposal("Milestones", ethers.parseEther("9"), "", 3);
-      await f.bank.connect(f.ali).certifyProposal(0);
+      await f.bank.connect(f.dave).certifyProposal(0);
       await f.bank.connect(f.bob).approveProposal(0); // 66% ≥ 60 → secured
       return f;
     }
 
     it("securing reserves everything but disburses only tranche #1", async function () {
-      const { bank, charlie } = await deployTranched();
+      const { bank, charlie, dave } = await deployTranched();
       expect(await bank.freeFunds()).to.equal(ethers.parseEther("21"));
       expect(await bank.withdrawable(charlie.address)).to.equal(ethers.parseEther("3"));
       expect(await bank.releasedAmount(0)).to.equal(ethers.parseEther("3"));
     });
 
     it("board releases tranches in order; remainder rides on the last", async function () {
-      const { bank, ali, bob, charlie } = await deployWithDeposits();
+      const { bank, ali, bob, charlie, dave } = await deployWithDeposits();
       await bank.connect(charlie).submitProposal("Indivisible", ethers.parseEther("10"), "", 3);
-      await bank.connect(ali).certifyProposal(0);
+      await bank.connect(dave).certifyProposal(0);
       await bank.connect(bob).approveProposal(0);
       const t = ethers.parseEther("10") / 3n;
       expect(await bank.releasedAmount(0)).to.equal(t);
       await expect(bank.connect(bob).releaseTranche(0)).to.be.revertedWith("Not board");
-      await expect(bank.connect(ali).releaseTranche(0))
+      await expect(bank.connect(dave).releaseTranche(0))
         .to.emit(bank, "TrancheReleased").withArgs(0, 2, t);
-      await expect(bank.connect(ali).releaseTranche(0))
+      await expect(bank.connect(dave).releaseTranche(0))
         .to.emit(bank, "TrancheReleased").withArgs(0, 3, ethers.parseEther("10") - 2n * t);
       expect(await bank.releasedAmount(0)).to.equal(ethers.parseEther("10"));
       expect(await bank.withdrawable(charlie.address)).to.equal(ethers.parseEther("10"));
-      await expect(bank.connect(ali).releaseTranche(0))
+      await expect(bank.connect(dave).releaseTranche(0))
         .to.be.revertedWith("All released");
     });
 
     it("principal return is capped by what was disbursed", async function () {
-      const { bank, charlie } = await deployTranched();
+      const { bank, charlie, dave } = await deployTranched();
       await expect(bank.connect(charlie).returnPrincipal(0, ethers.parseEther("4"), { value: ethers.parseEther("4") }))
         .to.be.revertedWith("Exceeds principal");
       await expect(bank.connect(charlie).returnPrincipal(0, ethers.parseEther("3"), { value: ethers.parseEther("3") }))
@@ -1232,14 +1262,14 @@ describe("SheikhFi", function () {
     });
 
     it("profit on completed milestones is distributable mid-project", async function () {
-      const { bank, ali, charlie } = await deployTranched();
+      const { bank, ali, charlie, dave } = await deployTranched();
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("3"), { value: ethers.parseEther("3") });
       await bank.connect(charlie).receiveRevenue(0, ethers.parseEther("6"), { value: ethers.parseEther("6") });
       await expect(bank.connect(ali).distributeRevenue(0)).to.not.be.reverted;
     });
 
     it("write-off frees undisbursed tranches and books loss only on disbursed", async function () {
-      const { bank, ali, bob, charlie } = await deployTranched();
+      const { bank, ali, bob, charlie, dave } = await deployTranched();
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("1"), { value: ethers.parseEther("1") });
       // released 3, returned 1 → loss 2; undisbursed 6 goes back to freeFunds
       await expect(bank.connect(ali).writeOffProposal(0))
@@ -1254,7 +1284,7 @@ describe("SheikhFi", function () {
     });
 
     it("early close with fully returned tranche books zero loss", async function () {
-      const { bank, ali, charlie } = await deployTranched();
+      const { bank, ali, charlie, dave } = await deployTranched();
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("3"), { value: ethers.parseEther("3") });
       await expect(bank.connect(ali).writeOffProposal(0))
         .to.emit(bank, "ProposalWrittenOff").withArgs(0, 0);
@@ -1263,7 +1293,7 @@ describe("SheikhFi", function () {
     });
 
     it("tranche bounds validated at submission", async function () {
-      const { bank, charlie } = await deployWithDeposits();
+      const { bank, charlie, dave } = await deployWithDeposits();
       await expect(bank.connect(charlie).submitProposal("Zero", ethers.parseEther("1"), "", 0))
         .to.be.revertedWith("Bad tranches");
       await expect(bank.connect(charlie).submitProposal("Many", ethers.parseEther("1"), "", 13))
@@ -1273,7 +1303,7 @@ describe("SheikhFi", function () {
 
   describe("Collateral (PLAN v3 §5)", function () {
     it("post, locked while projects active, withdrawable after full return", async function () {
-      const { bank, charlie } = await deployWithFundedProposal();
+      const { bank, charlie, dave } = await deployWithFundedProposal();
       await expect(bank.connect(charlie).postCollateral(ethers.parseEther("5"), { value: ethers.parseEther("5") }))
         .to.emit(bank, "CollateralPosted").withArgs(charlie.address, ethers.parseEther("5"));
       await expect(bank.connect(charlie).withdrawCollateral(ethers.parseEther("5")))
@@ -1289,21 +1319,21 @@ describe("SheikhFi", function () {
     });
 
     it("board slash compensates the pool and shrinks the eventual loss", async function () {
-      const { bank, ali, charlie } = await deployWithFundedProposal();
+      const { bank, ali, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).postCollateral(ethers.parseEther("5"), { value: ethers.parseEther("5") });
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("2"), { value: ethers.parseEther("2") });
       await expect(bank.connect(charlie).slashCollateral(charlie.address, 0, 1n, "self"))
         .to.be.revertedWith("Not board");
-      await expect(bank.connect(ali).slashCollateral(charlie.address, 0, ethers.parseEther("9"), "too much"))
+      await expect(bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("9"), "too much"))
         .to.be.revertedWith("Exceeds collateral");
       const freeBefore = await bank.freeFunds();
-      await expect(bank.connect(ali).slashCollateral(charlie.address, 0, ethers.parseEther("4"), "breach of reporting duty"))
+      await expect(bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("4"), "breach of reporting duty"))
         .to.emit(bank, "CollateralSlashed")
         .withArgs(charlie.address, 0, ethers.parseEther("4"), "breach of reporting duty");
       expect(await bank.freeFunds()).to.equal(freeBefore + ethers.parseEther("4"));
       expect((await bank.proposals(0)).principalReturned).to.equal(ethers.parseEther("6"));
       // slash capped by the remaining shortfall (10 - 6 = 4): 5 is too much
-      await expect(bank.connect(ali).slashCollateral(charlie.address, 0, ethers.parseEther("5"), "over"))
+      await expect(bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("5"), "over"))
         .to.be.revertedWith("Exceeds collateral");
       // write-off books only the un-compensated remainder
       await expect(bank.connect(ali).writeOffProposal(0))
@@ -1311,14 +1341,83 @@ describe("SheikhFi", function () {
     });
 
     it("slash completing the principal closes the project", async function () {
-      const { bank, ali, charlie } = await deployWithFundedProposal();
+      const { bank, ali, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).postCollateral(ethers.parseEther("10"), { value: ethers.parseEther("10") });
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("5"), { value: ethers.parseEther("5") });
-      await bank.connect(ali).slashCollateral(charlie.address, 0, ethers.parseEther("5"), "abandoned project");
+      await bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("5"), "abandoned project");
       expect((await bank.managers(charlie.address)).activeProjects).to.equal(0n);
       // remaining collateral is free to withdraw
       await expect(bank.connect(charlie).withdrawCollateral(ethers.parseEther("5")))
         .to.not.be.reverted;
+    });
+  });
+
+  describe("Волна v5 — шариатский аудит", function () {
+    it("write-off nets undistributed revenue into the shortfall (§1)", async function () {
+      const { bank, ali, bob, charlie } = await deployWithFundedProposal();
+      await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("4"), { value: ethers.parseEther("4") });
+      await bank.connect(charlie).receiveRevenue(0, ethers.parseEther("3"), { value: ethers.parseEther("3") });
+      const mgrBefore = await bank.withdrawable(charlie.address);
+      const ownerWBefore = await bank.withdrawable(ali.address);
+
+      await bank.connect(ali).writeOffProposal(0);
+
+      // 3 of revenue healed the 6 shortfall: loss = 3, not 6
+      expect((await bank.proposals(0)).principalReturned).to.equal(ethers.parseEther("7"));
+      expect(await bank.totalFunds()).to.equal(ethers.parseEther("27"));
+      // capital recovery carries no manager fee and no owner cut
+      expect(await bank.withdrawable(charlie.address)).to.equal(mgrBefore);
+      expect(await bank.withdrawable(ali.address)).to.equal(ownerWBefore);
+      // nothing left to distribute — the revenue was consumed as capital
+      await expect(bank.connect(ali).distributeRevenue(0))
+        .to.be.revertedWith("No revenue");
+      // solvency: freeFunds = 20 unreserved + 4 returned + 3 netted
+      expect(await bank.freeFunds()).to.equal(ethers.parseEther("27"));
+    });
+
+    it("revenue above the shortfall stays distributable as profit (§1)", async function () {
+      const { bank, ali, bob, charlie } = await deployWithFundedProposal();
+      await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("4"), { value: ethers.parseEther("4") });
+      await bank.connect(charlie).receiveRevenue(0, ethers.parseEther("8"), { value: ethers.parseEther("8") });
+      await bank.connect(ali).writeOffProposal(0);
+
+      // shortfall 6 fully healed, no stake was cut
+      expect((await bank.proposals(0)).principalReturned).to.equal(ethers.parseEther("10"));
+      expect(await bank.totalFunds()).to.equal(ethers.parseEther("30"));
+      // the 2 above the shortfall IS profit of a capital-intact operation:
+      // normal distribution, manager fee applies
+      await bank.connect(ali).distributeRevenue(0);
+      expect(await bank.withdrawable(charlie.address))
+        .to.equal(ethers.parseEther("10") + ethers.parseEther("2") * 20n / 100n);
+    });
+
+    it("post-write-off verdict restores the written-off stakes (§4)", async function () {
+      const { bank, ali, bob, charlie, dave } = await deployWithFundedProposal();
+      await bank.connect(charlie).postCollateral(ethers.parseEther("8"), { value: ethers.parseEther("8") });
+      await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("4"), { value: ethers.parseEther("4") });
+      await bank.connect(ali).writeOffProposal(0); // loss 6 cut from stakes
+      expect(await bank.totalFunds()).to.equal(ethers.parseEther("24"));
+
+      const bobBefore = (await bank.investors(bob.address)).fundsInvested;
+      await bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("4"), "late verdict");
+
+      // stakes restored pro-rata; books stay equal to the token
+      expect(await bank.totalFunds()).to.be.closeTo(ethers.parseEther("28"), 10n);
+      expect((await bank.investors(bob.address)).fundsInvested)
+        .to.be.gt(bobBefore);
+      expect(await bank.totalSupply()).to.equal(await bank.totalFunds());
+      // the cap is the loss actually written off (6): 4 restored, 2 left
+      await expect(bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("3"), "over"))
+        .to.be.revertedWith("Exceeds written-off loss");
+    });
+
+    it("certification is impossible while the board is the owner (§5)", async function () {
+      const { bank, ali, charlie } = await deployFixture();
+      await bank.connect(ali).addManager(charlie.address, "Charlie", 20);
+      await bank.connect(ali).depositFunds(ethers.parseEther("5"), { value: ethers.parseEther("5") });
+      await bank.connect(charlie).submitProposal("Self-certified", ethers.parseEther("1"), "", 1);
+      await expect(bank.connect(ali).certifyProposal(0))
+        .to.be.revertedWith("Board is owner");
     });
   });
 
