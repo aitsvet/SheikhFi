@@ -6,6 +6,15 @@
 #
 # solc / via_ir mirror hardhat.config.js so Halmos reasons about the same
 # bytecode Hardhat deploys.
+[invariant]
+# PLAN v4 §4 — the numbers of the cryptosarf campaign. fail_on_revert is the
+# point: a bounced handler call fails the run instead of passing silently.
+runs = 256
+depth = 64
+fail_on_revert = true
+# the per-selector call table is the campaign's acceptance artefact
+show_metrics = true
+
 [profile.default]
 src = "contracts"
 # `out` must stay "out": halmos looks there regardless of this setting.

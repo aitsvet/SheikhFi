@@ -15,6 +15,13 @@ ACTIVE_CHAIN=$(python3 -c "import json; print(json.load(open('webapp/src/abi/dep
 mkdir -p .verify
 docker compose run --rm halmos | tee .verify/halmos.out
 
+# Foundry invariant campaign (PLAN v4 §4): 256 runs x depth 64,
+# fail_on_revert — the printed per-selector call table is the acceptance
+# artefact (Reverts must be 0 everywhere), reachability is pinned by
+# test_campaignReachedTerminalStates.
+docker compose run --rm --entrypoint forge halmos test \
+    --match-path "test/verify/invariant/*" | tee .verify/invariant-campaign.out
+
 docker compose run --rm node 'npm ci --no-audit --no-fund && npx hardhat test' | tee .verify/hardhat.out
 
 # STANDARDS.md must not drift from the code and the run above (PLAN v4 §5):
