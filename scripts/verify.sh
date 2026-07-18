@@ -16,6 +16,11 @@ mkdir -p .verify
 docker compose run --rm halmos | tee .verify/halmos.out
 
 docker compose run --rm node 'npm ci --no-audit --no-fund && npx hardhat test' | tee .verify/hardhat.out
+
+# STANDARDS.md must not drift from the code and the run above (PLAN v4 §5):
+# symbols in the table exist, cited tests exist and passed, @custom:shariah
+# tags resolve to real clauses. Red kills the pipeline.
+docker compose run --rm node 'node scripts/check-traceability.mjs'
 docker compose run --rm node 'npx hardhat coverage 2>&1 | tail -10'
 docker compose run --rm node 'cd webapp && npm ci --no-audit --no-fund && npm run lint && npm run build'
 
