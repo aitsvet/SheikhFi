@@ -5,6 +5,7 @@ import TreasuryScreen from './screens/Treasury';
 import MembersScreen from './screens/Members';
 import ActivityScreen from './screens/Activity';
 import Desk from './screens/Desk';
+import ProofsScreen from './screens/Proofs';
 import { SCREENS, useStore } from './state';
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
   else if (screen === SCREENS.MEMBERS)   body = <MembersScreen />;
   else if (screen === SCREENS.ACTIVITY)  body = <ActivityScreen />;
   else if (screen === SCREENS.DESK)      body = <Desk />;
+  else if (screen === SCREENS.PROOFS)    body = <ProofsScreen />;
   return (
     <div className="app">
       <Sidebar />

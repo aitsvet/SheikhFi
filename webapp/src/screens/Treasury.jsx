@@ -70,6 +70,11 @@ function DistributePanel() {
             <Button onClick={doWriteOff} disabled={selOff === '' || busy}>
               Write off
             </Button>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 6 }}>
+              Symbolically proved for any input: the loss lands strictly pro-rata to
+              capital (AAOIFI SS 12 3/1/5/4), and revenue on hand nets the shortfall
+              first, fee-free (SS 40 3/2/1) — see Proofs.
+            </div>
           </div>
         )}
         <TxStatus msg={tx.msg} tone={tx.tone} />

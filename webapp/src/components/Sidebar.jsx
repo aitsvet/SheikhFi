@@ -86,6 +86,11 @@ export default function Sidebar() {
           count={events?.length}
           onClick={() => setScreen(SCREENS.ACTIVITY)}
         />
+        <NavItem
+          active={screen === SCREENS.PROOFS}
+          label="Proofs"
+          onClick={() => setScreen(SCREENS.PROOFS)}
+        />
       </div>
 
       <div className="sidebar-footer">

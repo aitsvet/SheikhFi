@@ -18,6 +18,7 @@ export const SCREENS = {
   MEMBERS:   'members',
   ACTIVITY:  'activity',
   DESK:      'desk',
+  PROOFS:    'proofs',
 };
 
 const ROLE_LABEL = {
@@ -108,6 +109,20 @@ export function StoreProvider({ children }) {
   const isBoard = !!address && !!boardAddr
     && address.toLowerCase() === boardAddr.toLowerCase();
 
+  // v5: exits require due notice (SS 12 3/1/6/1) on deployments that have it
+  const hasNotice = deployment.abi.some(e => e.name === 'noticeExit');
+  const [exitNotice, setExitNotice] = useState({ at: 0n, period: 0n });
+  const loadExitNotice = useCallback(async () => {
+    if (!contract || !address || !hasNotice) { setExitNotice({ at: 0n, period: 0n }); return; }
+    try {
+      const [at, period] = await Promise.all([
+        contract.exitNoticeAt(address), contract.noticePeriod(),
+      ]);
+      setExitNotice({ at, period });
+    } catch { setExitNotice({ at: 0n, period: 0n }); }
+  }, [contract, address, hasNotice]);
+  useEffect(() => { loadExitNotice(); }, [loadExitNotice]);
+
   // money-in helper: native attaches value; token mode approves first
   const payIn = useCallback(async (amountWei, call) => {
     if (!v3Money) return call({ value: amountWei }); // old ABI: payable only
@@ -195,10 +210,14 @@ export function StoreProvider({ children }) {
     run('Write off', () => contract.writeOffProposal(Number(proposalId))),
     [contract, run]
   );
-  const exitFunds = useCallback((amountWei) =>
-    run('Exit', () => contract.exit(amountWei)),
-    [contract, run]
-  );
+  const exitFunds = useCallback(async (amountWei) => {
+    await run('Exit', () => contract.exit(amountWei));
+    loadExitNotice(); // the exit consumed its notice
+  }, [contract, run, loadExitNotice]);
+  const noticeExit = useCallback(async () => {
+    await run('Notice exit', () => contract.noticeExit());
+    loadExitNotice();
+  }, [contract, run, loadExitNotice]);
   const receiveRevenue = useCallback((proposalId, amountWei) => {
     // ABI on Polygon Amoy carries the original typo `recieveRevenue`; new
     // deployments use the fixed name. Use whichever the bound contract has.
@@ -230,6 +249,7 @@ export function StoreProvider({ children }) {
     addInvestor, addManager, depositFunds, submitProposal,
     approveProposal, cancelProposal, receiveRevenue, distributeRevenue,
     returnPrincipal, writeOffProposal, exitFunds,
+    noticeExit, hasNotice, exitNotice,
     certifyProposal, releaseTranche,
     postCollateral, withdrawCollateral, slashCollateral,
     withdraw, settle,

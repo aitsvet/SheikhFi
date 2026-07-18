@@ -313,6 +313,7 @@ function OperatorDesk() {
 
 function PartnerDesk() {
   const { identity, investors, totalFunds, freeFunds, depositFunds, exitFunds,
+          noticeExit, hasNotice, exitNotice,
           hasEconomyV2, withdrawable, pending, proposals, tx, busy } = useStore();
   const me = investors.find(i => i.addr.toLowerCase() === identity.addr.toLowerCase());
   const myFunds = me?.fundsInvested ?? 0n;
@@ -370,23 +371,37 @@ function PartnerDesk() {
               Profit and loss are shared in proportion to your share of total funds.
               Every funded project must pass the approval threshold.
             </div>
-            {hasEconomyV2 && (
+            {hasEconomyV2 && (() => {
+              // v5: exits require due notice (SS 12 3/1/6/1) on new ABIs
+              const noticed = exitNotice.at > 0n;
+              const readyAt = noticed ? Number(exitNotice.at + exitNotice.period) * 1000 : 0;
+              const elapsed = noticed && Date.now() >= readyAt;
+              const exitReady = !hasNotice || elapsed;
+              return (
               <>
                 <Field label={`Exit (ETH) — up to ${formatEther(exitMax)} liquid`}>
                   <Input type="number" placeholder="0.0"
                     value={exitAmount} onChange={e => setExitAmount(e.target.value)} disabled={busy} />
                 </Field>
-                <div>
-                  <Button onClick={doExit} disabled={busy || !exitAmount || exitMax === 0n}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {hasNotice && !elapsed && (
+                    <Button onClick={noticeExit} disabled={busy || noticed}>
+                      {noticed ? `Notice armed — ready ${new Date(readyAt).toLocaleString()}` : 'Give exit notice'}
+                    </Button>
+                  )}
+                  <Button onClick={doExit} disabled={busy || !exitAmount || exitMax === 0n || !exitReady}>
                     Exit stake
                   </Button>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--ink-3)' }}>
                   Exits draw on free funds only — capital deployed in live projects
                   stays until returned or written off.
+                  {hasNotice && ' Withdrawal follows due notice to the partners (AAOIFI SS 12 3/1/6/1); each exit consumes its notice.'}
+                  {' '}The book-equality of every exit is symbolically proved — see Proofs.
                 </div>
               </>
-            )}
+              );
+            })()}
           </div>
         </Card>
 
