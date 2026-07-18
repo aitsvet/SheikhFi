@@ -22,8 +22,14 @@ function OverviewKpis() {
 
 export default function OverviewScreen() {
   const { proposals, investors, managers, getNickname,
-          approvalShareFor, approveShareThreshold, setScreen } = useStore();
+          approvalShareFor, approveShareThreshold, setScreen,
+          boardAddr, deployment, v5State } = useStore();
   const net = activeNetwork;
+  // Governance chips for the read-only / regulator view (v5): who certifies,
+  // whether share trading has opened, and the exit-notice period.
+  const boardSeparated = !!boardAddr && !!deployment.owner
+    && boardAddr.toLowerCase() !== deployment.owner.toLowerCase();
+  const v5 = v5State.activityCommenced !== null;
 
   const top = [...proposals]
     .map((p, i) => ({ ...p, _id: i, share: approvalShareFor(p) }))
@@ -43,6 +49,22 @@ export default function OverviewScreen() {
       />
 
       <OverviewKpis />
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '10px 0 14px' }}>
+        <Badge tone={boardSeparated ? 'ok' : 'warn'}>
+          {boardSeparated ? 'Sharia board separated from the owner' : 'Board = owner — certification blocked (v5)'}
+        </Badge>
+        {v5 && (
+          <>
+            <Badge tone={v5State.activityCommenced ? 'ok' : ''}>
+              {v5State.activityCommenced
+                ? 'Activity commenced — share transfers open (SS 17 5/2/16)'
+                : 'Pre-activity — share transfers closed (SS 17 5/2/1)'}
+            </Badge>
+            <Badge tone="blue">Exit notice: {Number(v5State.noticePeriod) / 3600} h (SS 12 3/1/6/1)</Badge>
+          </>
+        )}
+      </div>
 
       <div className="grid-2">
         <Card>

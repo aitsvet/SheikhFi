@@ -60,11 +60,19 @@ function DistributePanel() {
                 <option value="" disabled>
                   {writeOffable.length ? 'Select project with capital outstanding' : 'No capital outstanding'}
                 </option>
-                {writeOffable.map(p => (
-                  <option key={p._id} value={p._id}>
-                    #{p._id} — {p.description} · {formatEther(p.requiredFunds - (p.principalReturned ?? 0n))} ETH lost
-                  </option>
-                ))}
+                {writeOffable.map(p => {
+                  // v5: undistributed revenue on hand will net the shortfall
+                  // at write-off — preview the NET loss, not the gross gap
+                  const gap = p.requiredFunds - (p.principalReturned ?? 0n);
+                  const onHand = (p.revenueReceived ?? 0n) - (p.revenuePaid ?? 0n);
+                  const net = onHand >= gap ? 0n : gap - onHand;
+                  return (
+                    <option key={p._id} value={p._id}>
+                      #{p._id} — {p.description} · {formatEther(net)} ETH net loss
+                      {onHand > 0n ? ` (${formatEther(onHand)} revenue nets first)` : ''}
+                    </option>
+                  );
+                })}
               </Select>
             </Field>
             <Button onClick={doWriteOff} disabled={selOff === '' || busy}>

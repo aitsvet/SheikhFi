@@ -19,6 +19,8 @@ const EVENT_META = {
   ProposalCancelled:  { tone: '',     label: 'Proposal cancelled' },
   ThresholdChanged:   { tone: 'warn', label: 'Threshold changed' },
   VotingPeriodChanged:{ tone: 'warn', label: 'Voting period changed' },
+  ExitNoticed:        { tone: 'warn', label: 'Exit notice given' },
+  NoticePeriodChanged:{ tone: 'warn', label: 'Notice period changed' },
   RevenueReceived:    { tone: 'blue', label: 'Revenue received' },
   PrincipalReturned:  { tone: 'ok',   label: 'Principal returned' },
   ProposalWrittenOff: { tone: 'warn', label: 'Written off' },

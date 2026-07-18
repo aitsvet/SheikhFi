@@ -98,11 +98,17 @@ export function StoreProvider({ children }) {
   // pool denomination (v3): address(0)/absent = native; else an ERC-20
   const [assetAddr, setAssetAddr] = useState('');
   const [boardAddr, setBoardAddr] = useState('');
+  // v5 state surfaced for the regulator view; null = pre-v5 deployment
+  const [v5State, setV5State] = useState({ activityCommenced: null, noticePeriod: null });
   useEffect(() => {
-    if (!contract) { setAssetAddr(''); setBoardAddr(''); return; }
+    if (!contract) { setAssetAddr(''); setBoardAddr(''); setV5State({ activityCommenced: null, noticePeriod: null }); return; }
     (async () => {
       try { setAssetAddr(await contract.asset()); } catch { setAssetAddr(''); }
       try { setBoardAddr(await contract.board()); } catch { setBoardAddr(''); }
+      try {
+        const [ac, np] = await Promise.all([contract.activityCommenced(), contract.noticePeriod()]);
+        setV5State({ activityCommenced: ac, noticePeriod: np });
+      } catch { setV5State({ activityCommenced: null, noticePeriod: null }); }
     })();
   }, [contract]);
   const tokenMode = !!assetAddr && assetAddr !== ethers.ZeroAddress;
@@ -257,7 +263,7 @@ export function StoreProvider({ children }) {
     hasEconomyV2: deployment.abi.some(e => e.name === 'returnPrincipal'),
     // v3: board certification, tranches, collateral, tokenized shares
     hasV3: deployment.abi.some(e => e.name === 'certifyProposal'),
-    isBoard, boardAddr, tokenMode,
+    isBoard, boardAddr, tokenMode, v5State,
     getNickname, approvalShareFor,
     busy, loading, tx, setTx, refresh,
     events, eventsLoading, eventsFailedChunks,
