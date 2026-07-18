@@ -41,6 +41,7 @@
 | Multi-chain UI | `webapp/src/deployments.js` + селектор в сайдбаре; активный деплой в localStorage | README «Структура» |
 | Деплой v3 в Base Sepolia | `0xE0b29B49Af548a7cBAf7CaAc999197D895d8D0E0`, участники перенесены | README «Тестовая сеть» |
 | Волна v5 — шариатский аудит 2026-07-17 | неттинг выручки при списании (без фии/owner-cut, Halmos-доказано); notice на выход; гейт переводов до первого проекта; слэш после списания восстанавливает доли; сертификация только при board ≠ owner | STANDARDS §8, §9, §11–§13; describe «Волна v5»; `check_writeOffNetsRevenue` |
+| Аудит-волна 2026-07-18 | деплой v5 в Base Sepolia + Basescan-верификация; UI: метки notice-событий, чистый нетто-прогноз списания в Treasury, чипы v5-состояния в Overview; guard «Owner is board»; машинная трассировка `check-traceability.mjs` (в verify.sh, отриц. контроль пройден); SMTChecker-базлайн `scripts/smtcheck.sh` | README «Тестовая сеть»; STANDARDS «Машинная проверка трассировки»; `.verify/smtchecker.out` |
 
 Ранее выполненные волны (экономика v2, жизненный цикл, ownership, кэш
 Activity, контейнерный E2E) описаны там же: README — механика,
@@ -204,25 +205,19 @@ hardhat-flavoured analogue of a Foundry invariant suite» — и это точн
 
 ## Очередь (бэкенд; по отдельному запуску)
 
-Пополнение по аудиту 2026-07-18 (мелкое → крупное):
+Пополнение по аудиту 2026-07-18; выполненное в тот же день схлопнуто в
+«Выполнено» (UI-мелочи v5, guard `acceptOwnership`, Basescan-верификация,
+машинная трассировка, SMTChecker):
 
-- **UI-мелочи v5:** метки `ExitNoticed`/`NoticePeriodChanged` в Activity
-  (сейчас рендерятся сырым именем через fallback); Treasury в списке
-  «Write off» завышает потерю — вычитать нераспределённую выручку
-  (`revenueReceived − revenuePaid`), которую неттинг зачтёт; чип
-  v5-состояния для регулятора в Overview (совет отделён / notice / activity).
-- **e2e на v5-потоки:** notice → exit и неттинг-списание в контейнерном
-  стеке (сейчас смок не касается новых механик).
-- **Edge:** `acceptOwnership` не запрещает совпадение нового владельца с
-  советом — сертификация встанет до `setBoard`; либо require, либо строка
-  в README.
-- **Etherscan-верификация деплоя v5** — нужен непустой `ETHERSCAN_API_KEY`;
-  команда: `npx hardhat verify --network baseSepolia 0x7F4d…C76b "Ali" 60
-  0x0000000000000000000000000000000000000000`.
-- **Остаток Волны v4:** SMTChecker (CHC) как бесплатный базовый уровень;
-  перенос инвариантного сьюта на Foundry-кампанию с `fail_on_revert`
-  (по образцу cryptosarf, вместо одной seeded-прогулки); машинная проверка
-  STANDARDS.md (аналог `check_traceability.py`); сверка чисел доклада.
+- **Волна v4 §4 — Foundry-кампания:** перенос инвариантного сьюта на
+  `fail_on_revert`-кампанию по образцу cryptosarf (хендлеры, ghost-ы,
+  таблица вызовов как критерий приёмки) вместо одной seeded-прогулки;
+  `test/Invariants.test.js` остаётся быстрым регрессом.
+- **Числа доклада** (v4 §6) — сверка в `tahawwut/papers/CLAIMS.md`
+  (репозиторий tahawwut): тестов теперь 108, Halmos-проверок 6.
+- **e2e на v5-потоки:** notice → exit и неттинг-списание; текущий смок
+  бескошельковый by design — нужен mocked-wallet shim, как в
+  `cryptosarf/e2e/console.spec.ts`.
 - **Выбор совета голосованием партнёров** (GS 19 ¶12; STANDARDS §9 ⚠️) —
   дизайн, затем код.
 - **Индексер** (Ponder/subgraph) вместо клиентского скана логов; read-only
