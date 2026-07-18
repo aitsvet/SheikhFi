@@ -1,6 +1,6 @@
 {
- "generatedAt": "2026-07-18T11:33:37Z",
- "gitSha": "56eefca",
+ "generatedAt": "2026-07-18T21:22:49Z",
+ "gitSha": "ac04885",
  "contractSha256": "6fdf46fda7000f7d",
  "halmos": {
   "verdict": "6 passed, 0 failed",
@@ -10,7 +10,7 @@
     "name": "check_I2_depositPreservesBook",
     "argType": "uint256",
     "paths": 6,
-    "timeSec": 0.21,
+    "timeSec": 0.23,
     "invariant": "I2 · book equality",
     "clause": "AAOIFI SS 12 3/1/5/3",
     "claim": "A deposit mints the SHFI share one-to-one with the capital contributed — for ANY amount."
@@ -18,8 +18,8 @@
    {
     "name": "check_I2_exitPreservesBook",
     "argType": "uint256",
-    "paths": 7,
-    "timeSec": 0.26,
+    "paths": 8,
+    "timeSec": 0.22,
     "invariant": "I2 · book equality",
     "clause": "AAOIFI SS 12 3/1/6/1",
     "claim": "An exit — after the due notice the clause requires — burns exactly what it pays out and leaves every other partner's stake untouched, for ANY amount."
@@ -28,7 +28,7 @@
     "name": "check_I2_transferPreservesBook",
     "argType": "uint256",
     "paths": 6,
-    "timeSec": 0.44,
+    "timeSec": 0.5,
     "invariant": "I2 · book equality",
     "clause": "AAOIFI SS 17 3/6, 5/2/16",
     "claim": "A share transfer moves stake between partners and creates none — supply and books stay equal for ANY amount (transfers open only after commencement of activity)."
@@ -36,8 +36,8 @@
    {
     "name": "check_I3_accrualMonotone",
     "argType": "uint256",
-    "paths": 7,
-    "timeSec": 0.59,
+    "paths": 8,
+    "timeSec": 0.79,
     "invariant": "I3 · accrual monotone",
     "clause": "AAOIFI SS 12 3/1/5/7",
     "claim": "The profit accumulator only ever grows: distributed profit is never clawed back, for ANY revenue."
@@ -45,8 +45,8 @@
    {
     "name": "check_I6_writeOffProRata",
     "argType": "uint64",
-    "paths": 24,
-    "timeSec": 1.94,
+    "paths": 23,
+    "timeSec": 1.97,
     "invariant": "I6 · loss pro-rata",
     "clause": "AAOIFI SS 12 3/1/5/4",
     "claim": "A write-off cuts every partner's stake EXACTLY in proportion to capital — stated as an equality: a 1-wei drift in the pool's favour would be a counterexample. Proved for every repayment the contract accepts."
@@ -54,8 +54,8 @@
    {
     "name": "check_writeOffNetsRevenue",
     "argType": "uint64",
-    "paths": 20,
-    "timeSec": 2.27,
+    "paths": 19,
+    "timeSec": 2.29,
     "invariant": "v5 §1 · jabr al-khasarah",
     "clause": "AAOIFI SS 40 3/2/1; SS 13 8/7",
     "claim": "A write-off first nets undistributed revenue into the shortfall as capital recovery: no manager fee, no owner cut, loss shrinks by exactly the netted amount — for ANY revenue."
