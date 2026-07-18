@@ -205,6 +205,9 @@ contract SheikhFi {
 
     function acceptOwnership() external {
         require(msg.sender == pendingOwner, "Not pending owner");
+        // the owner may not simultaneously be the board: certification would
+        // deadlock on "Board is owner" until setBoard (v5 §5, GS 19)
+        require(msg.sender != board, "Owner is board");
         // crystallise everything earned under the old rate before switching:
         // pre-transfer accruals keep their old split, and only then does the
         // new owner stop paying the owner cut
@@ -259,6 +262,7 @@ contract SheikhFi {
 
     /// @notice AAOIFI SS 12 3/1/5/3 — shares follow capital contributions;
     /// mints the SHFI share token one-to-one with the stake.
+    /// @custom:shariah AAOIFI SS 12 3/1/5/3
     function depositFunds(uint amount) external payable onlyInvestor {
         require(amount > 0, "No value");
         _pull(amount);
@@ -298,6 +302,7 @@ contract SheikhFi {
     /// real-asset documents (docsHash) before voting can open. GS 19 ¶6/¶13:
     /// the review is external only if the board is not the owner — until the
     /// roles are actually separated (setBoard), certification is impossible.
+    /// @custom:shariah AAOIFI SS 31 4/2/1
     function certifyProposal(uint proposalId) external onlyBoard {
         require(msg.sender != owner, "Board is owner");
         Proposal storage p = proposals[proposalId];
@@ -386,6 +391,7 @@ contract SheikhFi {
     // manager repays the disbursed capital; goes straight back to the free
     // pool, no fee is taken (AAOIFI SS 13 8/1: the manager's share comes out
     // of profit only, never out of returned capital)
+    /// @custom:shariah AAOIFI SS 13 8/1
     function returnPrincipal(uint proposalId, uint amount) external payable {
         require(amount > 0, "No value");
         Proposal storage p = proposals[proposalId];
@@ -422,6 +428,8 @@ contract SheikhFi {
     // O(investors) by design: exactness of the loss allocation over lazy
     // accumulators; membership is owner-gated, so the set stays bounded.
     // Write off only when recovery is final — the proposal closes for good.
+    /// @custom:shariah AAOIFI SS 12 3/1/5/4
+    /// @custom:shariah AAOIFI SS 40 3/2/1
     function writeOffProposal(uint proposalId) external onlyOwner {
         Proposal storage p = proposals[proposalId];
         require(p.secured, "Not secured");
@@ -471,6 +479,8 @@ contract SheikhFi {
     }
 
     // owner distributes the revenue to the investors and the manager
+    /// @custom:shariah AAOIFI SS 13 8/7
+    /// @custom:shariah AAOIFI SS 12 3/1/5/6
     function distributeRevenue(uint proposalId) external onlyOwner {
         Proposal storage p = proposals[proposalId];
         uint revenue = p.revenueReceived - p.revenuePaid;
@@ -504,6 +514,7 @@ contract SheikhFi {
     /// @notice AAOIFI SS 12 3/1/6/1 — withdrawal only after due notice to the
     /// partners. The notice window also gives the owner time to write off an
     /// impaired project before the exiting stake escapes its share of the loss.
+    /// @custom:shariah AAOIFI SS 12 3/1/6/1
     function noticeExit() external onlyInvestor {
         exitNoticeAt[msg.sender] = block.timestamp;
         emit ExitNoticed(msg.sender, block.timestamp);
@@ -521,6 +532,8 @@ contract SheikhFi {
     // capital deployed into live projects cannot leave until returned or
     // written off. Gated by due notice (SS 12 3/1/6/1); each exit consumes
     // its notice.
+    /// @custom:shariah AAOIFI SS 12 3/1/6/2
+    /// @custom:shariah AAOIFI SS 12 3/1/5/9
     function exit(uint amount) external onlyInvestor {
         require(amount > 0, "No value");
         uint noticed = exitNoticeAt[msg.sender];
@@ -564,6 +577,8 @@ contract SheikhFi {
     // may also land after the write-off (SS 13 §6 does not expire): then the
     // compensation restores the freshly written-off stakes pro-rata, capped
     // by the loss actually written off for this proposal.
+    /// @custom:shariah AAOIFI SS 13 6
+    /// @custom:shariah AAOIFI SS 5 2/2/1
     function slashCollateral(address manager, uint proposalId, uint amount, string calldata reason) external onlyBoard {
         require(amount > 0, "No value");
         Proposal storage p = proposals[proposalId];
@@ -650,6 +665,8 @@ contract SheikhFi {
     /// commencement of activity; before it (SS 17 5/2/1) the pool is pure
     /// money and transfers would fall under sarf rules the token cannot
     /// honour. The pool stays permissioned (investors only).
+    /// @custom:shariah AAOIFI SS 17 5/2/16
+    /// @custom:shariah AAOIFI SS 17 5/2/1
     function _transferShares(address from, address to, uint amount) internal {
         require(activityCommenced, "Activity not commenced");
         require(isInvestor(from) && isInvestor(to), "Not investor");

@@ -1411,6 +1411,17 @@ describe("SheikhFi", function () {
         .to.be.revertedWith("Exceeds written-off loss");
     });
 
+    it("ownership cannot land on the board (§5)", async function () {
+      const { bank, ali, bob, dave } = await deployWithParticipants(); // board = dave
+      await bank.connect(ali).addInvestor(dave.address, "DaveInv", 90);
+      await bank.connect(ali).transferOwnership(dave.address);
+      await expect(bank.connect(dave).acceptOwnership())
+        .to.be.revertedWith("Owner is board");
+      // a non-board investor accepts fine
+      await bank.connect(ali).transferOwnership(bob.address);
+      await expect(bank.connect(bob).acceptOwnership()).to.not.be.reverted;
+    });
+
     it("certification is impossible while the board is the owner (§5)", async function () {
       const { bank, ali, charlie } = await deployFixture();
       await bank.connect(ali).addManager(charlie.address, "Charlie", 20);
