@@ -195,10 +195,43 @@ export function StoreProvider({ children }) {
     run('Withdraw collateral', () => contract.withdrawCollateral(amountWei)),
     [contract, run]
   );
+  // v7: verdicts are two-phase on new deployments; the direct call remains
+  // for pre-v7 ABIs (feature-detect below)
+  const hasV7 = deployment.abi.some(e => e.name === 'proposeSlash');
+  const [pendingSlashes, setPendingSlashes] = useState([]);
+  const loadPendingSlashes = useCallback(async () => {
+    if (!contract || !hasV7) { setPendingSlashes([]); return; }
+    try {
+      const count = await contract.getPendingSlashCount();
+      const out = [];
+      for (let i = 0n; i < count; i++) {
+        const p = await contract.pendingSlashes(i);
+        out.push({
+          id: Number(i), manager: p.manager, proposalId: Number(p.proposalId),
+          amount: p.amount, reason: p.reason, executeAfter: Number(p.executeAfter),
+          executed: p.executed, cancelled: p.cancelled,
+        });
+      }
+      setPendingSlashes(out);
+    } catch { setPendingSlashes([]); }
+  }, [contract, hasV7]);
+  useEffect(() => { loadPendingSlashes(); }, [loadPendingSlashes]);
   const slashCollateral = useCallback((manager, proposalId, amountWei, reason) =>
     run('Slash collateral', () => contract.slashCollateral(manager, Number(proposalId), amountWei, reason)),
     [contract, run]
   );
+  const proposeSlash = useCallback(async (manager, proposalId, amountWei, reason) => {
+    await run('Propose slash', () => contract.proposeSlash(manager, Number(proposalId), amountWei, reason));
+    loadPendingSlashes();
+  }, [contract, run, loadPendingSlashes]);
+  const cancelSlash = useCallback(async (id) => {
+    await run('Cancel slash', () => contract.cancelSlash(Number(id)));
+    loadPendingSlashes();
+  }, [contract, run, loadPendingSlashes]);
+  const executeSlash = useCallback(async (id) => {
+    await run('Execute slash', () => contract.executeSlash(Number(id)));
+    loadPendingSlashes();
+  }, [contract, run, loadPendingSlashes]);
   const approveProposal = useCallback((proposalId) =>
     run('Approve proposal', () => contract.approveProposal(Number(proposalId))),
     [contract, run]
@@ -294,6 +327,7 @@ export function StoreProvider({ children }) {
     hasV6, boardGov, nominateBoard, approveBoard, acceptBoardSeat,
     certifyProposal, releaseTranche,
     postCollateral, withdrawCollateral, slashCollateral,
+    hasV7, pendingSlashes, proposeSlash, cancelSlash, executeSlash,
     withdraw, settle,
     // v2 economy functions exist on this deployment's ABI
     hasEconomyV2: deployment.abi.some(e => e.name === 'returnPrincipal'),

@@ -58,6 +58,11 @@ const CURATED = {
     clause: "AAOIFI SS 12 3/1/5/4",
     claim: "A write-off cuts every partner's stake EXACTLY in proportion to capital — stated as an equality: a 1-wei drift in the pool's favour would be a counterexample. Proved for every repayment the contract accepts.",
   },
+  check_slashRestoresProRata: {
+    invariant: "v7 · verdict restoration pro-rata",
+    clause: "AAOIFI SS 13 §6; SS 5 6/8/2",
+    claim: "A post-write-off board verdict restores every partner's stake EXACTLY pro-rata — for ANY verdict amount, after the execute-time caps; the collateral freeze is fully released.",
+  },
   check_writeOffNetsRevenue: {
     invariant: "v5 §1 · jabr al-khasarah",
     clause: "AAOIFI SS 40 3/2/1; SS 13 8/7",
@@ -91,6 +96,7 @@ const out = {
     { mutation: "write-off splits the loss equally instead of pro-rata", failedCheck: "check_I6_writeOffProRata", counterexample: "repaid = 3 wei / ≈10 ether − 4 wei" },
     { mutation: "transfer credits the recipient without debiting the sender", failedCheck: "check_I2_transferPreservesBook", counterexample: "amount = 1" },
     { mutation: "write-off netting disabled (towardPrincipal = 0)", failedCheck: "check_writeOffNetsRevenue", counterexample: "concrete revenue value; the other five checks stay green" },
+    { mutation: "verdict restoration splits equally instead of pro-rata", failedCheck: "check_slashRestoresProRata", counterexample: "concrete verdict amount, 20 paths; the other six checks stay green" },
   ],
   hardhat: { testsPassing: passing ? Number(passing[1]) : null, includes: "unit suite + seeded 200-step invariant walk (I1–I6)" },
 };

@@ -92,28 +92,35 @@ function DistributePanel() {
 }
 
 function SlashPanel() {
-  const { proposals, managers, slashCollateral, getNickname, tx, busy } = useStore();
+  const { proposals, managers, slashCollateral, hasV7, pendingSlashes,
+          proposeSlash, cancelSlash, executeSlash, getNickname, tx, busy } = useStore();
   const [sel, setSel] = useState('');
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
-  // slashable: secured, not written off, capital outstanding, manager has collateral
+  // v7: a verdict may also target a written-off proposal (restores the cut
+  // stakes); pre-v7 ABIs only slash live shortfalls
   const slashable = proposals
     .map((p, i) => ({ ...p, _id: i }))
-    .filter(p => p.secured && p.writtenOff !== true
-      && (p.principalReturned ?? 0n) < p.requiredFunds
+    .filter(p => p.secured
+      && (hasV7 ? true : p.writtenOff !== true && (p.principalReturned ?? 0n) < p.requiredFunds)
       && (managers.find(m => m.addr.toLowerCase() === p.manager.toLowerCase())?.collateral ?? 0n) > 0n);
 
   const doSlash = async () => {
     const p = slashable.find(x => String(x._id) === String(sel));
     if (!p) return;
-    await slashCollateral(p.manager, p._id, parseEther(amount), reason);
+    if (hasV7) await proposeSlash(p.manager, p._id, parseEther(amount), reason);
+    else await slashCollateral(p.manager, p._id, parseEther(amount), reason);
     setSel(''); setAmount(''); setReason('');
   };
 
+  const open = pendingSlashes.filter(p => !p.executed && !p.cancelled);
+
   return (
     <Card>
-      <CardHead title="Board verdict — slash collateral"
-        sub="Only for misconduct, negligence or breach — never for a commercial loss" />
+      <CardHead title={hasV7 ? 'Board verdict — propose slash (timelocked)' : 'Board verdict — slash collateral'}
+        sub={hasV7
+          ? 'Only for misconduct, negligence or breach. The collateral freezes while the verdict pends; caps re-resolve at execution — only actual damage is taken.'
+          : 'Only for misconduct, negligence or breach — never for a commercial loss'} />
       <div className="card-body stack">
         <Field label="Proposal">
           <Select value={sel} onChange={e => setSel(e.target.value)}
@@ -138,9 +145,29 @@ function SlashPanel() {
               value={reason} onChange={e => setReason(e.target.value)} disabled={busy} />
           </Field>
           <Button onClick={doSlash} disabled={busy || sel === '' || !amount || !reason}>
-            Slash
+            {hasV7 ? 'Propose' : 'Slash'}
           </Button>
         </div>
+        {hasV7 && open.length > 0 && (
+          <div className="stack" style={{ borderTop: '1px solid var(--rule)', paddingTop: 10 }}>
+            {open.map(p => {
+              const ready = Date.now() >= p.executeAfter * 1000;
+              return (
+                <div key={p.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+                  <span className="num">#{p.proposalId}</span>
+                  <span>{getNickname(p.manager)}</span>
+                  <span className="num">{formatEther(p.amount)} ETH</span>
+                  <span style={{ color: 'var(--ink-3)' }}>«{p.reason}»</span>
+                  <span style={{ color: 'var(--ink-3)' }}>
+                    {ready ? 'window elapsed' : `executable ${new Date(p.executeAfter * 1000).toLocaleString()}`}
+                  </span>
+                  <Button size="sm" onClick={() => executeSlash(p.id)} disabled={busy || !ready}>Execute</Button>
+                  <Button size="sm" variant="ghost" onClick={() => cancelSlash(p.id)} disabled={busy}>Cancel</Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <TxStatus msg={tx.msg} tone={tx.tone} />
       </div>
     </Card>
