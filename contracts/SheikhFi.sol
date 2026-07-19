@@ -79,6 +79,23 @@ contract SheikhFi {
 
     mapping(address => uint) public withdrawable;
 
+    // v6 — board elected by the partners (AAOIFI GS 19 ¶12: members approved
+    // by the shareholders on the governing body's recommendation). The owner
+    // nominates with a credentials hash; partners approve stake-weighted; the
+    // elected candidate accepts the seat (two-step). Replacement-by-election
+    // is also the dismissal path — GS 19 gives both to the shareholders.
+    struct BoardNomination {
+        address candidate;
+        string cvHash;                 // credentials document (IPFS CID)
+        uint approvalWeight;           // frozen stakes of approvers
+        uint deadline;
+        bool elected;
+        bool cancelled;
+    }
+    BoardNomination[] public boardNominations;
+    mapping(uint => mapping(address => bool)) public hasVotedBoard;
+    address public pendingBoardSeat;
+
     // SS 12 3/1/6/1: withdrawal only "after giving his partner/s due notice".
     mapping(address => uint) public exitNoticeAt;
     uint public noticePeriod = 48 hours;
@@ -101,6 +118,9 @@ contract SheikhFi {
     event ThresholdChanged(uint threshold);
     event VotingPeriodChanged(uint period);
     event BoardChanged(address indexed board);
+    event BoardNominated(uint indexed nominationId, address indexed candidate, string cvHash);
+    event BoardApproved(uint indexed nominationId, address indexed investor, uint approvalWeight);
+    event BoardElected(uint indexed nominationId, address indexed candidate);
     event OwnershipTransferStarted(address indexed from, address indexed to);
     event OwnershipTransferred(address indexed from, address indexed to);
     event RevenueReceived(uint indexed proposalId, address indexed manager, uint amount);
@@ -188,10 +208,66 @@ contract SheikhFi {
         emit ManagerAdded(manager, nickname, profitRate);
     }
 
+    /// @notice Bootstrap only: once the board is separated from the owner,
+    /// every further change goes through partner election (GS 19 ¶12).
     function setBoard(address b) external onlyOwner {
+        require(board == owner, "Board elected");
         require(b != address(0), "Zero address");
         board = b;
         emit BoardChanged(b);
+    }
+
+    /// @notice The owner recommends a board candidate (GS 19 ¶12); partners
+    /// decide. Address-level independence is enforced here; substantive
+    /// fit-and-proper (GS 19 — "independent and free from conflict of
+    /// interest") is what the partners examine in cvHash before voting.
+    function nominateBoard(address candidate, string calldata cvHash) external onlyOwner {
+        require(candidate != address(0), "Zero address");
+        require(candidate != owner, "Candidate is owner");
+        require(!isManager(candidate), "Candidate is manager");
+        uint id = boardNominations.length;
+        boardNominations.push(BoardNomination(candidate, cvHash, 0, block.timestamp + votingPeriod, false, false));
+        emit BoardNominated(id, candidate, cvHash);
+    }
+
+    function cancelBoardNomination(uint nominationId) external onlyOwner {
+        BoardNomination storage n = boardNominations[nominationId];
+        require(!n.elected, "Already elected");
+        require(!n.cancelled, "Cancelled");
+        n.cancelled = true;
+    }
+
+    /// @notice Stake-weighted approval, frozen at vote time — the same
+    /// discipline as project voting; the election threshold is the pool's
+    /// approveShareThreshold.
+    function approveBoard(uint nominationId) external onlyInvestor {
+        require(totalFunds > 0, "No investors");
+        BoardNomination storage n = boardNominations[nominationId];
+        require(!n.cancelled, "Cancelled");
+        require(!n.elected, "Already elected");
+        require(block.timestamp <= n.deadline, "Voting closed");
+        require(!hasVotedBoard[nominationId][msg.sender], "Already voted");
+        hasVotedBoard[nominationId][msg.sender] = true;
+        n.approvalWeight += investors[msg.sender].fundsInvested;
+        emit BoardApproved(nominationId, msg.sender, n.approvalWeight);
+        if (n.approvalWeight * 100 / totalFunds >= approveShareThreshold) {
+            n.elected = true;
+            pendingBoardSeat = n.candidate;
+            emit BoardElected(nominationId, n.candidate);
+        }
+    }
+
+    /// @notice The elected candidate takes the seat — the two-step that keeps
+    /// a mistyped nomination from bricking the fatwa lifecycle.
+    function acceptBoardSeat() external {
+        require(msg.sender == pendingBoardSeat, "Not elected candidate");
+        board = msg.sender;
+        pendingBoardSeat = address(0);
+        emit BoardChanged(msg.sender);
+    }
+
+    function getBoardNominationCount() external view returns (uint) {
+        return boardNominations.length;
     }
 
     // Two-step ownership transfer. The new owner must already be an investor:

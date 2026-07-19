@@ -1204,14 +1204,21 @@ describe("SheikhFi", function () {
         .to.be.revertedWith("Cancelled");
     });
 
-    it("setBoard: owner-only, non-zero, takes effect", async function () {
-      const { bank, ali, bob, charlie, dave } = await deployWithDeposits();
+    it("setBoard: owner-only bootstrap, non-zero, closes after separation (v6)", async function () {
+      // fresh pool: board == owner, the bootstrap path is open
+      const { bank, ali, bob, charlie, dave } = await deployFixture();
+      await bank.connect(ali).addInvestor(bob.address, "Bob", 95);
+      await bank.connect(ali).addManager(charlie.address, "Charlie", 20);
       await expect(bank.connect(bob).setBoard(bob.address))
         .to.be.revertedWith("Not owner");
       await expect(bank.connect(ali).setBoard(ethers.ZeroAddress))
         .to.be.revertedWith("Zero address");
       await expect(bank.connect(ali).setBoard(bob.address))
         .to.emit(bank, "BoardChanged").withArgs(bob.address);
+      // separated: bootstrap closed — further changes go through election
+      await expect(bank.connect(ali).setBoard(dave.address))
+        .to.be.revertedWith("Board elected");
+      await bank.connect(ali).depositFunds(ethers.parseEther("2"), { value: ethers.parseEther("2") });
       await bank.connect(charlie).submitProposal("Post-handover", ethers.parseEther("1"), "", 1);
       await expect(bank.connect(dave).certifyProposal(0))
         .to.be.revertedWith("Not board");
@@ -1420,6 +1427,56 @@ describe("SheikhFi", function () {
       // a non-board investor accepts fine
       await bank.connect(ali).transferOwnership(bob.address);
       await expect(bank.connect(bob).acceptOwnership()).to.not.be.reverted;
+    });
+
+    it("board election: nominate, stake-weighted vote, two-step accept (v6)", async function () {
+      const { bank, ali, bob, charlie, dave } = await deployWithDeposits(); // board = dave
+      const frank = (await ethers.getSigners())[5];
+
+      // only the owner recommends; managers and the owner are not electable
+      await expect(bank.connect(bob).nominateBoard(frank.address, "cv"))
+        .to.be.revertedWith("Not owner");
+      await expect(bank.connect(ali).nominateBoard(charlie.address, "cv"))
+        .to.be.revertedWith("Candidate is manager");
+      await expect(bank.connect(ali).nominateBoard(ali.address, "cv"))
+        .to.be.revertedWith("Candidate is owner");
+
+      await expect(bank.connect(ali).nominateBoard(frank.address, "ipfs-cv"))
+        .to.emit(bank, "BoardNominated").withArgs(0, frank.address, "ipfs-cv");
+
+      // bob alone holds 20/30 = 66.7% ≥ 60% — his vote elects
+      await expect(bank.connect(bob).approveBoard(0))
+        .to.emit(bank, "BoardElected").withArgs(0, frank.address);
+      await expect(bank.connect(bob).approveBoard(0))
+        .to.be.revertedWith("Already elected");
+
+      // two-step: only the elected candidate takes the seat
+      await expect(bank.connect(bob).acceptBoardSeat())
+        .to.be.revertedWith("Not elected candidate");
+      await expect(bank.connect(frank).acceptBoardSeat())
+        .to.emit(bank, "BoardChanged").withArgs(frank.address);
+      expect(await bank.board()).to.equal(frank.address);
+
+      // once separated, the bootstrap path is closed for good
+      await expect(bank.connect(ali).setBoard(dave.address))
+        .to.be.revertedWith("Board elected");
+    });
+
+    it("board election gates: deadline, double vote, cancel (v6)", async function () {
+      const { bank, ali, bob } = await deployWithDeposits();
+      const frank = (await ethers.getSigners())[5];
+      await bank.connect(ali).nominateBoard(frank.address, "cv");
+      await bank.connect(ali).approveBoard(0); // 10/30 — below threshold
+      await expect(bank.connect(ali).approveBoard(0))
+        .to.be.revertedWith("Already voted");
+      await time.increase(31 * 24 * 3600);
+      await expect(bank.connect(bob).approveBoard(0))
+        .to.be.revertedWith("Voting closed");
+
+      await bank.connect(ali).nominateBoard(frank.address, "cv2");
+      await bank.connect(ali).cancelBoardNomination(1);
+      await expect(bank.connect(bob).approveBoard(1))
+        .to.be.revertedWith("Cancelled");
     });
 
     it("certification is impossible while the board is the owner (§5)", async function () {
