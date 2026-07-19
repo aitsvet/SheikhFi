@@ -216,6 +216,41 @@ export function StoreProvider({ children }) {
     run('Write off', () => contract.writeOffProposal(Number(proposalId))),
     [contract, run]
   );
+  // v6 — board election
+  const hasV6 = deployment.abi.some(e => e.name === 'nominateBoard');
+  const [boardGov, setBoardGov] = useState({ nominations: [], pendingSeat: '' });
+  const loadBoardGov = useCallback(async () => {
+    if (!contract || !hasV6) { setBoardGov({ nominations: [], pendingSeat: '' }); return; }
+    try {
+      const [count, pendingSeat] = await Promise.all([
+        contract.getBoardNominationCount(), contract.pendingBoardSeat(),
+      ]);
+      const nominations = [];
+      for (let i = 0n; i < count; i++) {
+        const n = await contract.boardNominations(i);
+        nominations.push({
+          id: Number(i), candidate: n.candidate, cvHash: n.cvHash,
+          approvalWeight: n.approvalWeight, deadline: Number(n.deadline),
+          elected: n.elected, cancelled: n.cancelled,
+        });
+      }
+      setBoardGov({ nominations, pendingSeat });
+    } catch { setBoardGov({ nominations: [], pendingSeat: '' }); }
+  }, [contract, hasV6]);
+  useEffect(() => { loadBoardGov(); }, [loadBoardGov]);
+  const nominateBoard = useCallback(async (candidate, cvHash) => {
+    await run('Nominate board', () => contract.nominateBoard(candidate, cvHash));
+    loadBoardGov();
+  }, [contract, run, loadBoardGov]);
+  const approveBoard = useCallback(async (id) => {
+    await run('Approve board', () => contract.approveBoard(Number(id)));
+    loadBoardGov();
+  }, [contract, run, loadBoardGov]);
+  const acceptBoardSeat = useCallback(async () => {
+    await run('Accept board seat', () => contract.acceptBoardSeat());
+    loadBoardGov();
+  }, [contract, run, loadBoardGov]);
+
   const exitFunds = useCallback(async (amountWei) => {
     await run('Exit', () => contract.exit(amountWei));
     loadExitNotice(); // the exit consumed its notice
@@ -256,6 +291,7 @@ export function StoreProvider({ children }) {
     approveProposal, cancelProposal, receiveRevenue, distributeRevenue,
     returnPrincipal, writeOffProposal, exitFunds,
     noticeExit, hasNotice, exitNotice,
+    hasV6, boardGov, nominateBoard, approveBoard, acceptBoardSeat,
     certifyProposal, releaseTranche,
     postCollateral, withdrawCollateral, slashCollateral,
     withdraw, settle,

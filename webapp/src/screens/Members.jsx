@@ -1,6 +1,72 @@
-import { Avatar, Badge, Card, CardHead, Empty, formatEther, shortAddr } from '../ui';
-import { useStore } from '../state';
+import { useState } from 'react';
+import { Avatar, Badge, Button, Card, CardHead, Empty, Field, Input, formatEther, shortAddr } from '../ui';
+import { useStore, ROLES } from '../state';
 import { PageHead, WithdrawPill } from './PageHead';
+
+/// v6 — board elected by the partners (AAOIFI GS 19 ¶12): the owner
+/// nominates with a credentials hash, partners approve stake-weighted,
+/// the elected candidate accepts the seat. Read-only for guests.
+function BoardGovernance() {
+  const { hasV6, boardGov, boardAddr, identity, totalFunds,
+          approveShareThreshold, nominateBoard, approveBoard,
+          acceptBoardSeat, busy } = useStore();
+  const [cand, setCand] = useState('');
+  const [cv, setCv] = useState('');
+  if (!hasV6) return null;
+  const isOwner = identity.role === ROLES.OWNER;
+  const canVote = identity.role === ROLES.OWNER || identity.role === ROLES.INVESTOR;
+  const meIsPending = identity.addr
+    && boardGov.pendingSeat?.toLowerCase() === identity.addr.toLowerCase();
+  const pct = (w) => totalFunds > 0n ? Number((w * 1000n) / totalFunds) / 10 : 0;
+  return (
+    <Card style={{ marginTop: 18 }}>
+      <CardHead
+        title="Sharia board — elected by the partners"
+        sub={`Current board ${shortAddr(boardAddr)} · GS 19 ¶12: the owner nominates, the partners approve (threshold ${approveShareThreshold}%), the elected candidate accepts the seat`}
+      />
+      <div className="card-body stack">
+        {boardGov.nominations.length === 0 && (
+          <div style={{ fontSize: 13, color: 'var(--ink-3)' }}>No nominations yet.</div>
+        )}
+        {boardGov.nominations.map(n => (
+          <div key={n.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className="mono">{shortAddr(n.candidate)}</span>
+            <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>cv: {n.cvHash || '—'}</span>
+            {n.cancelled ? <Badge>Cancelled</Badge>
+              : n.elected ? <Badge tone="ok">Elected{meIsPending && boardGov.pendingSeat === n.candidate ? ' — you' : ''}</Badge>
+              : Date.now() > n.deadline * 1000 ? <Badge>Expired</Badge>
+              : <>
+                  <Badge tone="blue">{pct(n.approvalWeight).toFixed(1)}% of {approveShareThreshold}%</Badge>
+                  {canVote && (
+                    <Button size="sm" disabled={busy} onClick={() => approveBoard(n.id)}>Approve</Button>
+                  )}
+                </>}
+          </div>
+        ))}
+        {meIsPending && (
+          <div>
+            <Button variant="primary" disabled={busy} onClick={acceptBoardSeat}>
+              Accept board seat
+            </Button>
+          </div>
+        )}
+        {isOwner && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <Field label="Candidate address" style={{ minWidth: 280 }}>
+              <Input value={cand} onChange={e => setCand(e.target.value)} placeholder="0x…" disabled={busy} />
+            </Field>
+            <Field label="Credentials (IPFS CID)" style={{ minWidth: 200 }}>
+              <Input value={cv} onChange={e => setCv(e.target.value)} placeholder="cv hash" disabled={busy} />
+            </Field>
+            <Button disabled={busy || !cand} onClick={() => { nominateBoard(cand, cv); setCand(''); setCv(''); }}>
+              Nominate
+            </Button>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
 
 function MemberRow({ m, kind }) {
   return (
@@ -90,6 +156,8 @@ export default function MembersScreen() {
           }
         </Card>
       </div>
+
+      <BoardGovernance />
     </>
   );
 }
