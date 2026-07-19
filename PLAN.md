@@ -42,6 +42,7 @@
 | Деплой v3 в Base Sepolia | `0xE0b29B49Af548a7cBAf7CaAc999197D895d8D0E0`, участники перенесены | README «Тестовая сеть» |
 | Волна v5 — шариатский аудит 2026-07-17 | неттинг выручки при списании (без фии/owner-cut, Halmos-доказано); notice на выход; гейт переводов до первого проекта; слэш после списания восстанавливает доли; сертификация только при board ≠ owner | STANDARDS §8, §9, §11–§13; describe «Волна v5»; `check_writeOffNetsRevenue` |
 | Волна v4 — верификация | Halmos: 6 доказательств самого контракта, мутационно проверены; Foundry-кампания 256×64, fail_on_revert, Reverts=0; SMTChecker (CHC+Eldarica): 0 нарушений assert, 51 unproved overflow (ревёрты ≥0.8); машинная трассировка STANDARDS; выбор инструментов и сравнение — в истории git этого файла | STANDARDS «Формальная верификация», «SMTChecker», «Машинная проверка трассировки»; `.verify/` |
+| Волна v7 — тайм-лок вердиктов | двухфазный слэш: `proposeSlash` (заморозка залога) → `slashDelay` (конфиг owner 0–30 дней) → `executeSlash` с пересчётом капов (сжатие недостачи, списание в окне → ветка восстановления); отмена — только советом, у owner нет переопределения; Halmos `check_slashRestoresProRata` (мутационно проверен) | STANDARDS §11; describe «Волна v7»; Proofs |
 | Волна v6 — выбор совета партнёрами | GS 19 ¶12 реализован: `nominateBoard(candidate, cvHash)` (кандидат не owner/менеджер) → взвешенное `approveBoard` (порог пула) → двухшаговый `acceptBoardSeat`; `setBoard` — только бутстрап до первого разделения; перевыборы = процедура отзыва | STANDARDS §9 (✅); describe-тесты «board election…»; Members → карточка «Sharia board — elected by the partners» |
 | E2E v5-потоков | `e2e/tests/v5-flows.spec.js`: injected-wallet shim (анлокнутые аккаунты hardhat), notice → warp 48h → exit глазами партнёра; Treasury показывает нетто-прогноз «3 ETH net loss (revenue nets first)» и списание — глазами owner | `docker compose --profile e2e up` — 2 passed |
 | Аудит-волна 2026-07-18 | деплой v5 в Base Sepolia + Basescan-верификация; UI: метки notice-событий, чистый нетто-прогноз списания в Treasury, чипы v5-состояния в Overview; guard «Owner is board»; машинная трассировка `check-traceability.mjs` (в verify.sh, отриц. контроль пройден); SMTChecker-базлайн `scripts/smtcheck.sh` | README «Тестовая сеть»; STANDARDS «Машинная проверка трассировки»; `.verify/smtchecker.out` |
@@ -62,5 +63,10 @@ STANDARDS.md — соответствие, тесты — поведение.
   режим для регулятора уже работает (браузер без кошелька читает контракт
   через публичный RPC).
 - **seed.mjs** — кран + онбординг одной командой (CDP-кран, нужны секреты).
-- **Слэшинг-арбитраж как процесс**: несколько членов совета, мультиподпись
-  вердикта, тайм-лок на слэш.
+- **Мультиподпись вердиктов — конфигурация, не код**: с v6 совет — избираемый
+  адрес, а адресом может быть контракт. Избрание мультисига (BoardMultisig
+  из cryptosarf или Safe) даёт M-of-N вердикты без изменений SheikhFi:
+  мультисиг `propose`-ит calldata `proposeSlash`/`certifyProposal`/…,
+  собирает подписи, `execute`-ит; `acceptBoardSeat` он исполняет сам.
+  Runbook: задеплоить мультисиг → `nominateBoard(адрес_мультисига, cvHash)`
+  → голоса партнёров → мультисиг исполняет `acceptBoardSeat`.
