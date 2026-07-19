@@ -59,6 +59,7 @@ contract VerifyTest {
         bank.addInvestor(BOB, "Bob", 80);
         bank.addManager(CAROL, "Carol", 20);
         bank.setBoard(BOARD); // certification requires board != owner (v5 §5)
+        bank.setSlashDelay(0); // v7 config: instant execution keeps the proof scenario flat
 
         vm.deal(address(this), 1000 ether);
         vm.deal(ALICE, 1000 ether);
@@ -228,5 +229,50 @@ contract VerifyTest {
         assert(bank.totalFunds() >= tfBefore - loss);
         assert(bank.totalFunds() <= tfBefore);
         assert(_book() == bank.totalSupply());
+    }
+
+    // ------------------------------------------------------------------ v7
+
+    /// A post-write-off verdict restores every stake EXACTLY pro-rata — for
+    /// ANY verdict amount the contract will accept, after the execute-time
+    /// caps (collateral, unrestored loss). The mirror of check_I6: an equal
+    /// split or a drift in anyone's favour is a counterexample.
+    /// AAOIFI SS 13 6; SS 5 6/8/2 (only actual damage — and symmetrically,
+    /// only actual restoration).
+    function check_slashRestoresProRata(uint64 amount) public {
+        _securedProject();
+        vm.deal(CAROL, 8 ether);
+        vm.prank(CAROL);
+        bank.postCollateral{value: 8 ether}(8 ether);
+        vm.deal(CAROL, 4 ether);
+        vm.prank(CAROL);
+        bank.returnPrincipal{value: 4 ether}(0, 4 ether);
+        bank.writeOffProposal(0); // loss 6 cut pro-rata
+
+        uint256 tfBefore = bank.totalFunds();
+        uint256 ownerBefore = bank.balanceOf(address(this));
+        uint256 aliceBefore = bank.balanceOf(ALICE);
+        uint256 bobBefore = bank.balanceOf(BOB);
+        (, , , , , , , , , , , , , , , uint lossW, uint lossR) = bank.proposals(0);
+
+        vm.prank(BOARD);
+        bank.proposeSlash(CAROL, 0, amount, "proof verdict"); // >8 ether pruned
+        vm.prank(BOARD);
+        bank.executeSlash(0);
+
+        // the effective amount after the execute-time caps
+        uint256 eff = amount;
+        if (eff > 8 ether) eff = 8 ether;
+        uint256 cap = lossW - lossR;
+        if (eff > cap) eff = cap;
+
+        // restoration is EXACT per partner: stake + stake*eff/tfBefore
+        assert(bank.balanceOf(address(this)) == ownerBefore + (ownerBefore * eff) / tfBefore);
+        assert(bank.balanceOf(ALICE) == aliceBefore + (aliceBefore * eff) / tfBefore);
+        assert(bank.balanceOf(BOB) == bobBefore + (bobBefore * eff) / tfBefore);
+        assert(_book() == bank.totalSupply());
+        // never restores more than the verdict, and the freeze fully released
+        assert(bank.totalFunds() <= tfBefore + eff);
+        assert(bank.pendingSlashTotal(CAROL) == 0);
     }
 }

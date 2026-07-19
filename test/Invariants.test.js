@@ -47,6 +47,9 @@ describe("Invariants (randomized ops)", function () {
     // v5 §2: the walk arms a notice before every exit; a zero period keeps
     // the walk dense (the arming itself is still exercised every time)
     await bank.setNoticePeriod(0);
+    // v7: zero slash delay — the walk proposes and executes in one step;
+    // the delay gate itself is unit-tested
+    await bank.setSlashDelay(0);
 
     const investors = [ali, bob, dave];
     const managersS = [charlie, erin];
@@ -161,7 +164,8 @@ describe("Invariants (randomized ops)", function () {
         const coll = (await bank.managers(p.manager)).collateral;
         const cap = shortfall < coll ? shortfall : coll;
         if (cap === 0n) return;
-        await bank.connect(frank).slashCollateral(p.manager, id, cap / 2n + 1n, "invariant-walk verdict");
+        await bank.connect(frank).proposeSlash(p.manager, id, cap / 2n + 1n, "invariant-walk verdict");
+        await bank.connect(frank).executeSlash((await bank.getPendingSlashCount()) - 1n);
       },
       async () => {
         lastOp = 'withdraw';

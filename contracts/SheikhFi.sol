@@ -106,6 +106,27 @@ contract SheikhFi {
     // funded proposal, never unset.
     bool public activityCommenced;
 
+    // v7 — timelocked slash verdicts (SS 13 §6 discipline with a contest
+    // window). The board proposes; after slashDelay it executes; only the
+    // board cancels its own pending verdict — there is deliberately NO owner
+    // override (the capital side must not sit above the board's verdict).
+    // The delay is configuration: the owner may set 0 to restore instant
+    // verdicts, up to 30 days.
+    struct PendingSlash {
+        address manager;
+        uint proposalId;
+        uint amount;                   // requested; caps re-resolved at execute
+        string reason;
+        uint executeAfter;
+        bool executed;
+        bool cancelled;
+    }
+    PendingSlash[] public pendingSlashes;
+    uint public slashDelay = 48 hours;
+    // collateral spoken for by pending verdicts — withdrawCollateral must not
+    // let a manager drain the security out from under a verdict in its window
+    mapping(address => uint) public pendingSlashTotal;
+
     event InvestorAdded(address indexed investor, string nickname, uint profitRate);
     event ManagerAdded(address indexed manager, string nickname, uint profitRate);
     event FundsDeposited(address indexed investor, uint amount);
@@ -134,6 +155,9 @@ contract SheikhFi {
     event CollateralPosted(address indexed manager, uint amount);
     event CollateralWithdrawn(address indexed manager, uint amount);
     event CollateralSlashed(address indexed manager, uint indexed proposalId, uint amount, string reason);
+    event SlashProposed(uint indexed slashId, address indexed manager, uint indexed proposalId, uint amount, string reason, uint executeAfter);
+    event SlashCancelled(uint indexed slashId);
+    event SlashDelayChanged(uint delay);
     event Transfer(address indexed from, address indexed to, uint value);
     event Approval(address indexed holder, address indexed spender, uint value);
 
@@ -602,6 +626,13 @@ contract SheikhFi {
         emit NoticePeriodChanged(p);
     }
 
+    /// @notice v7 config: 0 restores instant verdicts; capped at 30 days.
+    function setSlashDelay(uint d) external onlyOwner {
+        require(d <= 30 days, "Bad period");
+        slashDelay = d;
+        emit SlashDelayChanged(d);
+    }
+
     // investor takes part of their stake back out of the free pool — an exit
     // at constructive valuation (AAOIFI SS 12 3/1/6/2, 3/1/5/9): freeFunds is
     // realised cash and the stake is already net of written-off losses;
@@ -644,26 +675,73 @@ contract SheikhFi {
         Manager storage m = managers[msg.sender];
         require(m.activeProjects == 0, "Active projects");
         require(amount <= m.collateral, "Exceeds collateral");
+        // collateral under a pending verdict cannot leave (v7): repaying the
+        // principal inside the contest window must not let the security
+        // escape the verdict
+        require(amount <= m.collateral - pendingSlashTotal[msg.sender], "Frozen by pending slash");
         m.collateral -= amount;
         withdrawable[msg.sender] += amount;
         emit CollateralWithdrawn(msg.sender, amount);
     }
 
-    // the call itself is the verdict; `reason` records the grounds. A verdict
-    // may also land after the write-off (SS 13 §6 does not expire): then the
-    // compensation restores the freshly written-off stakes pro-rata, capped
-    // by the loss actually written off for this proposal.
+    /// @notice v7 — the verdict is two-phase (SS 13 §6 with a contest
+    /// window): the board proposes with the grounds on chain, the affected
+    /// collateral freezes, and after `slashDelay` the board executes. Only
+    /// the board cancels its own pending verdict; the owner deliberately has
+    /// no override — the capital side must not sit above the board's verdict.
+    /// A verdict may also land after the write-off (SS 13 §6 does not
+    /// expire): it then restores the freshly written-off stakes pro-rata,
+    /// capped by the loss actually written off.
     /// @custom:shariah AAOIFI SS 13 6
     /// @custom:shariah AAOIFI SS 5 2/2/1
-    function slashCollateral(address manager, uint proposalId, uint amount, string calldata reason) external onlyBoard {
+    function proposeSlash(address manager, uint proposalId, uint amount, string calldata reason) external onlyBoard returns (uint slashId) {
         require(amount > 0, "No value");
         Proposal storage p = proposals[proposalId];
         require(p.manager == manager, "Not proposal manager");
         require(p.secured, "Not secured");
+        require(pendingSlashTotal[manager] + amount <= managers[manager].collateral, "Exceeds collateral");
+        pendingSlashTotal[manager] += amount;
+        slashId = pendingSlashes.length;
+        pendingSlashes.push(PendingSlash(manager, proposalId, amount, reason, block.timestamp + slashDelay, false, false));
+        emit SlashProposed(slashId, manager, proposalId, amount, reason, block.timestamp + slashDelay);
+    }
+
+    function cancelSlash(uint slashId) external onlyBoard {
+        PendingSlash storage ps = pendingSlashes[slashId];
+        require(!ps.executed, "Executed");
+        require(!ps.cancelled, "Cancelled");
+        ps.cancelled = true;
+        pendingSlashTotal[ps.manager] -= ps.amount;
+        emit SlashCancelled(slashId);
+    }
+
+    /// @notice Executes a matured verdict. Both caps are re-resolved HERE:
+    /// the shortfall may have shrunk (principal returned inside the window)
+    /// and a write-off may have happened mid-delay — the verdict then flows
+    /// through the restoration branch. Slashes min(requested, collateral,
+    /// branch cap): only actual damage is ever taken (SS 5 6/8/2 discipline).
+    function executeSlash(uint slashId) external onlyBoard {
+        PendingSlash storage ps = pendingSlashes[slashId];
+        require(!ps.executed, "Executed");
+        require(!ps.cancelled, "Cancelled");
+        require(block.timestamp >= ps.executeAfter, "Delay not elapsed");
+        ps.executed = true;
+        pendingSlashTotal[ps.manager] -= ps.amount;
+        _slash(ps.manager, ps.proposalId, ps.amount, ps.reason);
+    }
+
+    function getPendingSlashCount() external view returns (uint) {
+        return pendingSlashes.length;
+    }
+
+    function _slash(address manager, uint proposalId, uint amount, string memory reason) internal {
+        Proposal storage p = proposals[proposalId];
         Manager storage m = managers[manager];
-        require(amount <= m.collateral, "Exceeds collateral");
+        if (amount > m.collateral) amount = m.collateral;
         if (!p.writtenOff) {
-            require(amount <= _releasedAmount(p) - p.principalReturned, "Exceeds shortfall");
+            uint cap = _releasedAmount(p) - p.principalReturned;
+            if (amount > cap) amount = cap;
+            require(amount > 0, "Nothing to slash");
             m.collateral -= amount;
             // compensation restores the pool's capital, like a principal return
             p.principalReturned += amount;
@@ -675,7 +753,9 @@ contract SheikhFi {
             // post-mortem verdict: un-write the loss, pro-rata to current
             // stakes (the same books the write-off cut; interim membership
             // drift is accepted and documented — PLAN «Волна v5 §4»)
-            require(amount <= p.lossWrittenOff - p.lossRestored, "Exceeds written-off loss");
+            uint cap2 = p.lossWrittenOff - p.lossRestored;
+            if (amount > cap2) amount = cap2;
+            require(amount > 0, "Nothing to slash");
             require(totalFunds > 0, "No investors");
             m.collateral -= amount;
             p.lossRestored += amount;

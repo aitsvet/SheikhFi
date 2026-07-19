@@ -56,6 +56,9 @@ contract Handler {
     constructor() {
         bank = new SheikhFi("Owner", 50, address(0));
         bank.setBoard(BOARD); // v5 §5: board must differ from the owner
+        // v7: zero delay — each slash op proposes and executes atomically;
+        // the delay gate itself is unit-tested
+        bank.setSlashDelay(0);
         bank.addInvestor(ALICE, "Alice", 95);
         bank.addInvestor(BOB, "Bob", 80);
         bank.addManager(CAROL, "Carol", 20);
@@ -270,8 +273,12 @@ contract Handler {
             uint256 cap = bank.releasedAmount(id) - principalReturned;
             if (coll < cap) cap = coll;
             if (cap == 0) return;
+            uint256 amt = _bound(amtSeed, 1, cap);
             vm.prank(BOARD);
-            bank.slashCollateral(m, id, _bound(amtSeed, 1, cap), "walk verdict");
+            bank.proposeSlash(m, id, amt, "walk verdict");
+            uint256 sid = bank.getPendingSlashCount() - 1;
+            vm.prank(BOARD);
+            bank.executeSlash(sid);
             ghost_slashed++;
             return;
         }
@@ -283,8 +290,12 @@ contract Handler {
         uint256 cap2 = lossW - lossR;
         if (coll2 < cap2) cap2 = coll2;
         if (cap2 == 0) return;
+        uint256 amt2 = _bound(amtSeed, 1, cap2);
         vm.prank(BOARD);
-        bank.slashCollateral(m2, id, _bound(amtSeed, 1, cap2), "post-mortem verdict");
+        bank.proposeSlash(m2, id, amt2, "post-mortem verdict");
+        uint256 sid2 = bank.getPendingSlashCount() - 1;
+        vm.prank(BOARD);
+        bank.executeSlash(sid2);
         ghost_slashed++;
         ghost_slashedPostWriteOff++;
     }

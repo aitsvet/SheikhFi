@@ -27,6 +27,15 @@ async function afterNotice(bank, signer) {
   await time.increase(48 * 3600 + 1);
 }
 
+// v7: verdicts are two-phase — propose, let the configurable delay elapse,
+// execute. Returns the execute tx promise for event assertions.
+async function slashNow(bank, board, manager, proposalId, amount, reason) {
+  await bank.connect(board).proposeSlash(manager, proposalId, amount, reason);
+  const id = (await bank.getPendingSlashCount()) - 1n;
+  await time.increase(48 * 3600 + 1);
+  return bank.connect(board).executeSlash(id);
+}
+
 async function deployWithDeposits() {
   const f = await deployWithParticipants();
   await f.bank.connect(f.ali).depositFunds(ethers.parseEther("10"), { value: ethers.parseEther("10") });
@@ -1329,18 +1338,18 @@ describe("SheikhFi", function () {
       const { bank, ali, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).postCollateral(ethers.parseEther("5"), { value: ethers.parseEther("5") });
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("2"), { value: ethers.parseEther("2") });
-      await expect(bank.connect(charlie).slashCollateral(charlie.address, 0, 1n, "self"))
+      await expect(bank.connect(charlie).proposeSlash(charlie.address, 0, 1n, "self"))
         .to.be.revertedWith("Not board");
-      await expect(bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("9"), "too much"))
+      await expect(bank.connect(dave).proposeSlash(charlie.address, 0, ethers.parseEther("9"), "too much"))
         .to.be.revertedWith("Exceeds collateral");
       const freeBefore = await bank.freeFunds();
-      await expect(bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("4"), "breach of reporting duty"))
+      await expect(await slashNow(bank, dave, charlie.address, 0, ethers.parseEther("4"), "breach of reporting duty"))
         .to.emit(bank, "CollateralSlashed")
         .withArgs(charlie.address, 0, ethers.parseEther("4"), "breach of reporting duty");
       expect(await bank.freeFunds()).to.equal(freeBefore + ethers.parseEther("4"));
       expect((await bank.proposals(0)).principalReturned).to.equal(ethers.parseEther("6"));
-      // slash capped by the remaining shortfall (10 - 6 = 4): 5 is too much
-      await expect(bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("5"), "over"))
+      // only 1 ETH of collateral remains — a 5 ETH verdict cannot be proposed
+      await expect(bank.connect(dave).proposeSlash(charlie.address, 0, ethers.parseEther("5"), "over"))
         .to.be.revertedWith("Exceeds collateral");
       // write-off books only the un-compensated remainder
       await expect(bank.connect(ali).writeOffProposal(0))
@@ -1351,11 +1360,72 @@ describe("SheikhFi", function () {
       const { bank, ali, charlie, dave } = await deployWithFundedProposal();
       await bank.connect(charlie).postCollateral(ethers.parseEther("10"), { value: ethers.parseEther("10") });
       await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("5"), { value: ethers.parseEther("5") });
-      await bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("5"), "abandoned project");
+      await slashNow(bank, dave, charlie.address, 0, ethers.parseEther("5"), "abandoned project");
       expect((await bank.managers(charlie.address)).activeProjects).to.equal(0n);
       // remaining collateral is free to withdraw
       await expect(bank.connect(charlie).withdrawCollateral(ethers.parseEther("5")))
         .to.not.be.reverted;
+    });
+  });
+
+  describe("Волна v7 — тайм-лок вердиктов", function () {
+    async function withCollateral() {
+      const f = await deployWithFundedProposal(); // 10 disbursed to charlie
+      await f.bank.connect(f.charlie).postCollateral(ethers.parseEther("8"), { value: ethers.parseEther("8") });
+      return f;
+    }
+
+    it("execute waits out the configurable delay; board cancels its own verdict", async function () {
+      const { bank, charlie, dave } = await withCollateral();
+      await bank.connect(dave).proposeSlash(charlie.address, 0, ethers.parseEther("3"), "verdict");
+      await expect(bank.connect(dave).executeSlash(0))
+        .to.be.revertedWith("Delay not elapsed");
+      await bank.connect(dave).cancelSlash(0);
+      await expect(bank.connect(dave).executeSlash(0)).to.be.revertedWith("Cancelled");
+      expect(await bank.pendingSlashTotal(charlie.address)).to.equal(0n);
+    });
+
+    it("pending verdict freezes the collateral — repaying inside the window does not free it", async function () {
+      const { bank, charlie, dave } = await withCollateral();
+      await bank.connect(dave).proposeSlash(charlie.address, 0, ethers.parseEther("3"), "verdict");
+      // manager fully repays: activeProjects drops to 0…
+      await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("10"), { value: ethers.parseEther("10") });
+      // …but the frozen 3 ETH cannot leave before the verdict resolves
+      await expect(bank.connect(charlie).withdrawCollateral(ethers.parseEther("6")))
+        .to.be.revertedWith("Frozen by pending slash");
+      await expect(bank.connect(charlie).withdrawCollateral(ethers.parseEther("5")))
+        .to.not.be.reverted;
+    });
+
+    it("caps re-resolve at execute: a fully repaid project leaves nothing to slash", async function () {
+      const { bank, charlie, dave } = await withCollateral();
+      await bank.connect(dave).proposeSlash(charlie.address, 0, ethers.parseEther("3"), "verdict");
+      await bank.connect(charlie).returnPrincipal(0, ethers.parseEther("10"), { value: ethers.parseEther("10") });
+      await time.increase(48 * 3600 + 1);
+      await expect(bank.connect(dave).executeSlash(0))
+        .to.be.revertedWith("Nothing to slash");
+    });
+
+    it("a write-off inside the window routes the verdict to the restoration branch", async function () {
+      const { bank, ali, bob, charlie, dave } = await withCollateral();
+      await bank.connect(dave).proposeSlash(charlie.address, 0, ethers.parseEther("3"), "verdict");
+      await bank.connect(ali).writeOffProposal(0); // loss 10 cut from stakes
+      const bobBefore = (await bank.investors(bob.address)).fundsInvested;
+      await time.increase(48 * 3600 + 1);
+      await bank.connect(dave).executeSlash(0);
+      expect((await bank.investors(bob.address)).fundsInvested).to.be.gt(bobBefore);
+      expect((await bank.proposals(0)).lossRestored).to.equal(ethers.parseEther("3"));
+      expect(await bank.totalSupply()).to.equal(await bank.totalFunds());
+    });
+
+    it("slashDelay is owner configuration: bounds, and 0 restores instant verdicts", async function () {
+      const { bank, ali, bob, charlie, dave } = await withCollateral();
+      await expect(bank.connect(bob).setSlashDelay(0)).to.be.revertedWith("Not owner");
+      await expect(bank.connect(ali).setSlashDelay(31 * 24 * 3600)).to.be.revertedWith("Bad period");
+      await bank.connect(ali).setSlashDelay(0);
+      await bank.connect(dave).proposeSlash(charlie.address, 0, ethers.parseEther("2"), "instant");
+      await expect(bank.connect(dave).executeSlash(0))
+        .to.emit(bank, "CollateralSlashed");
     });
   });
 
@@ -1406,16 +1476,19 @@ describe("SheikhFi", function () {
       expect(await bank.totalFunds()).to.equal(ethers.parseEther("24"));
 
       const bobBefore = (await bank.investors(bob.address)).fundsInvested;
-      await bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("4"), "late verdict");
+      await slashNow(bank, dave, charlie.address, 0, ethers.parseEther("4"), "late verdict");
 
       // stakes restored pro-rata; books stay equal to the token
       expect(await bank.totalFunds()).to.be.closeTo(ethers.parseEther("28"), 10n);
       expect((await bank.investors(bob.address)).fundsInvested)
         .to.be.gt(bobBefore);
       expect(await bank.totalSupply()).to.equal(await bank.totalFunds());
-      // the cap is the loss actually written off (6): 4 restored, 2 left
-      await expect(bank.connect(dave).slashCollateral(charlie.address, 0, ethers.parseEther("3"), "over"))
-        .to.be.revertedWith("Exceeds written-off loss");
+      // v7: caps re-resolve at execute — a 3 ETH verdict against the 2 ETH
+      // of unrestored loss executes for exactly the 2 (only actual damage)
+      await slashNow(bank, dave, charlie.address, 0, ethers.parseEther("3"), "capped");
+      expect(await bank.totalFunds()).to.be.closeTo(ethers.parseEther("30"), 20n);
+      expect((await bank.proposals(0)).lossRestored)
+        .to.be.closeTo(ethers.parseEther("6"), 20n);
     });
 
     it("ownership cannot land on the board (§5)", async function () {
