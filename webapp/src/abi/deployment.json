@@ -1,5 +1,5 @@
 {
-  "contractAddress": "0x7F4d6b3abCE0D03cB75432B719326DBD9540C76b",
+  "contractAddress": "0x9811c5b8c466F127B0CCf27Ee303f1E8e6670681",
   "abi": [
     {
       "inputs": [
@@ -52,12 +52,81 @@
       "inputs": [
         {
           "indexed": true,
+          "internalType": "uint256",
+          "name": "nominationId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "investor",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "approvalWeight",
+          "type": "uint256"
+        }
+      ],
+      "name": "BoardApproved",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
           "internalType": "address",
           "name": "board",
           "type": "address"
         }
       ],
       "name": "BoardChanged",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "nominationId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "candidate",
+          "type": "address"
+        }
+      ],
+      "name": "BoardElected",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "nominationId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "candidate",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "cvHash",
+          "type": "string"
+        }
+      ],
+      "name": "BoardNominated",
       "type": "event"
     },
     {
@@ -579,6 +648,13 @@
     },
     {
       "inputs": [],
+      "name": "acceptBoardSeat",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
       "name": "acceptOwnership",
       "outputs": [],
       "stateMutability": "nonpayable",
@@ -695,6 +771,19 @@
       "inputs": [
         {
           "internalType": "uint256",
+          "name": "nominationId",
+          "type": "uint256"
+        }
+      ],
+      "name": "approveBoard",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
           "name": "proposalId",
           "type": "uint256"
         }
@@ -784,6 +873,63 @@
         }
       ],
       "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "boardNominations",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "candidate",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "cvHash",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "approvalWeight",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "deadline",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "elected",
+          "type": "bool"
+        },
+        {
+          "internalType": "bool",
+          "name": "cancelled",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "nominationId",
+          "type": "uint256"
+        }
+      ],
+      "name": "cancelBoardNomination",
+      "outputs": [],
+      "stateMutability": "nonpayable",
       "type": "function"
     },
     {
@@ -930,6 +1076,19 @@
     },
     {
       "inputs": [],
+      "name": "getBoardNominationCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
       "name": "getInvestorCount",
       "outputs": [
         {
@@ -981,6 +1140,30 @@
         }
       ],
       "name": "hasVoted",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "name": "hasVotedBoard",
       "outputs": [
         {
           "internalType": "bool",
@@ -1164,6 +1347,24 @@
       "type": "function"
     },
     {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "candidate",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "cvHash",
+          "type": "string"
+        }
+      ],
+      "name": "nominateBoard",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
       "inputs": [],
       "name": "noticeExit",
       "outputs": [],
@@ -1228,6 +1429,19 @@
           "internalType": "uint256",
           "name": "ownerPending",
           "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "pendingBoardSeat",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
         }
       ],
       "stateMutability": "view",
@@ -1735,5 +1949,5 @@
   "ownerNickname": "Ali",
   "network": "baseSepolia",
   "chainId": 84532,
-  "deployBlock": 44283938
+  "deployBlock": 44337158
 }

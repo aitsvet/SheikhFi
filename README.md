@@ -80,25 +80,27 @@ SheikhFi реализует принципы исламского финанси
 
 Контракт развёрнут в **Base Sepolia** (`chainId 84532`, RPC `https://sepolia.base.org`, обозреватель `https://sepolia.basescan.org`): на 2026 год это единственный публичный testnet с программным faucet без mainnet-gate — через Coinbase Developer Platform.
 
-Текущий деплой (v5: неттинг списания, notice на выход, гейт переводов,
-пост-мортем слэш, обязательное разделение совета и владельца):
+Текущий деплой (v6: совет избирается партнёрами — GS 19 ¶12; плюс весь v5):
 
 | Поле | Значение |
 | --- | --- |
-| Адрес контракта | `0x7F4d6b3abCE0D03cB75432B719326DBD9540C76b` |
+| Адрес контракта | `0x9811c5b8c466F127B0CCf27Ee303f1E8e6670681` |
 | Владелец | `0xC7120b785Fc0877bb370E3EDe2dAE15F07d12A73` (`Ali`) |
 | Шариатский совет | `0xf6eb5bbBAb196242Afcda8fe6bF6A37EfC1f26b4` (отдельный ключ — v5 §5) |
 | Approval threshold | 60% |
 | Участники | Bob (инвестор, 95%), Charlie (управляющий, 20%), AliLegacy (инвестор) |
 
-Смена совета и пополнение его газа: `node scripts/set-board.mjs 0xAddr [gasEth]`.
+Бутстрап совета (до первого разделения) и пополнение его газа:
+`node scripts/set-board.mjs 0xAddr [gasEth]`; дальнейшая смена — только избранием
+партнёрами (v6: `nominateBoard` → `approveBoard` → `acceptBoardSeat`).
 
-Архивные деплои: v3 в Base Sepolia
+Архивные деплои: v5 в Base Sepolia
+(`0x7F4d6b3abCE0D03cB75432B719326DBD9540C76b`), v3 в Base Sepolia
 (`0xE0b29B49Af548a7cBAf7CaAc999197D895d8D0E0`), первая версия в Base Sepolia
 (`0x3743aCa3d2ED36744703C36c6AfB27B8E3A444Db`, владелец `0xb853…c807`) и
 Polygon Amoy (`0x408f311ff021e4bba7a3088b6a1c4af1a9c23994`). Веб-приложение
 определяет возможности контракта по ABI (feature-detect), поэтому одинаково
-работает и со старыми деплоями, и с v5.
+работает и со старыми деплоями, и с v6.
 
 Архивный деплой в Polygon Amoy (`0x408f311ff021e4bba7a3088b6a1c4af1a9c23994`) больше не используется веб-приложением, но сохранён в `webapp/src/networks.js` как известная сеть для обратной совместимости.
 
